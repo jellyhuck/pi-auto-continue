@@ -1,0 +1,64 @@
+/**
+ * Formatting utilities for timestamps, durations, and UI messages.
+ */
+
+/**
+ * Formats a duration in milliseconds to a human-readable string.
+ * Examples: "45s", "3m 12s", "1h 30m", "5h"
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 0) ms = 0;
+  const totalSeconds = Math.round(ms / 1000);
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (remainingMinutes === 0) {
+    return `${hours}h`;
+  }
+
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+/**
+ * Formats a delay duration in a compact representation for logs.
+ * Examples: "500ms", "5s", "1.5m", "1h"
+ */
+export function formatDelay(ms: number): string {
+  if (ms < 1000) {
+    return `${Math.round(ms)}ms`;
+  }
+  if (ms < 60000) {
+    const s = Math.round(ms / 100) / 10;
+    return `${s}s`;
+  }
+  if (ms < 3600000) {
+    const m = Math.round(ms / 6000) / 10;
+    return `${m}m`;
+  }
+  const h = Math.round((ms / 3600000) * 10) / 10;
+  return `${h}h`;
+}
+
+/**
+ * Truncates and cleans error message strings for single-line UI notifications.
+ */
+export function truncateErrorMessage(error?: string, maxLength = 120): string {
+  if (!error) return "Unknown error";
+  const singleLine = error.replace(/\r?\n|\r/g, " ").replace(/\s+/g, " ").trim();
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return singleLine.slice(0, maxLength - 3) + "...";
+}

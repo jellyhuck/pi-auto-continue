@@ -1,0 +1,37 @@
+{
+  "name": "pi-auto-continue",
+  "version": "0.1.0",
+  "description": "Pi coding agent extension to automatically resume and retry sessions interrupted by rate limits, quota exhaustion, or token limits.",
+  "type": "module",
+  "main": "index.ts",
+  "types": "src/types.ts",
+  "scripts": {
+    "test": "node --test --experimental-strip-types tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-coding-agent",
+    "pi-extension",
+    "auto-continue",
+    "auto-resume",
+    "retry",
+    "rate-limit",
+    "quota"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

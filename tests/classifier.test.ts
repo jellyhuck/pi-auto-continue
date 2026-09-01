@@ -1,0 +1,138 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { classifyInterruption, extractRetryAfterDelay } from "../src/classifier.ts";
+
+describe("classifier", () => {
+  describe("extractRetryAfterDelay", () => {
+    it("extracts integer seconds from Retry-After header", () => {
+      const delay = extractRetryAfterDelay({ "retry-after": "30" });
+      assert.equal(delay, 30000);
+    });
+
+    it("extracts decimal seconds from Retry-After header", () => {
+      const delay = extractRetryAfterDelay({ "retry-after": "12.5" });
+      assert.equal(delay, 12500);
+    });
+
+    it("extracts ms from retry-after-ms header", () => {
+      const delay = extractRetryAfterDelay({ "retry-after-ms": "4500" });
+      assert.equal(delay, 4500);
+    });
+
+    it("extracts seconds from x-ratelimit-reset delta", () => {
+      const delay = extractRetryAfterDelay({ "x-ratelimit-reset": "25" });
+      assert.equal(delay, 25000);
+    });
+
+    it("extracts delay from error message text with seconds", () => {
+      const delay = extractRetryAfterDelay(undefined, "Rate limit reached. Please try again in 15 seconds.");
+      assert.equal(delay, 15000);
+    });
+
+    it("extracts delay from error message text with minutes", () => {
+      const delay = extractRetryAfterDelay(undefined, "Quota exceeded. Please retry after 2 minutes.");
+      assert.equal(delay, 120000);
+    });
+
+    it("returns null when no retry delay is indicated", () => {
+      const delay = extractRetryAfterDelay(undefined, "Something unexpected happened.");
+      assert.equal(delay, null);
+    });
+  });
+
+  describe("classifyInterruption", () => {
+    it("identifies HTTP 429 status code as RATE_LIMIT", () => {
+      const result = classifyInterruption({
+        httpStatus: 429,
+        httpHeaders: { "retry-after": "10" },
+      });
+      assert.equal(result.type, "RATE_LIMIT");
+      assert.equal(result.retryAfterMs, 10000);
+    });
+
+    it("identifies HTTP 503 / 529 as RATE_LIMIT / overloaded", () => {
+      const result = classifyInterruption({ httpStatus: 503 });
+      assert.equal(result.type, "RATE_LIMIT");
+    });
+
+    it("identifies Anthropic overloaded and rate limit errors", () => {
+      const result1 = classifyInterruption({
+        stopReason: "error",
+        errorMessage: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      });
+      assert.equal(result1.type, "RATE_LIMIT");
+
+      const result2 = classifyInterruption({
+        stopReason: "error",
+        errorMessage: '{"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}',
+      });
+      assert.equal(result2.type, "RATE_LIMIT");
+    });
+
+    it("identifies Google Gemini RESOURCE_EXHAUSTED errors", () => {
+      const result = classifyInterruption({
+        stopReason: "error",
+        errorMessage: "GoogleGenerativeAIError: [429 Too Many Requests] RESOURCE_EXHAUSTED: Quota exceeded for quota metric 'Generate Content API Requests'",
+      });
+      assert.equal(result.type, "RATE_LIMIT");
+    });
+
+    it("identifies OpenAI rate limit and quota exceeded messages", () => {
+      const result1 = classifyInterruption({
+        stopReason: "error",
+        errorMessage: "Rate limit reached for model gpt-4o in organization org-123 on requests per min (RPM): Limit 500, Used 500, Requested 1. Please try again in 20s.",
+      });
+      assert.equal(result1.type, "RATE_LIMIT");
+      assert.equal(result1.retryAfterMs, 20000);
+
+      const result2 = classifyInterruption({
+        stopReason: "error",
+        errorMessage: "You exceeded your current quota, please check your plan and billing details.",
+      });
+      assert.equal(result2.type, "RATE_LIMIT");
+    });
+
+    it("identifies CONTEXT_OVERFLOW errors", () => {
+      const result = classifyInterruption({
+        stopReason: "error",
+        errorMessage: "Invalid request: prompt is too long. The model's maximum context length is 128000 tokens.",
+      });
+      assert.equal(result.type, "CONTEXT_OVERFLOW");
+    });
+
+    it("identifies BILLING_HARD_LIMIT errors", () => {
+      const result = classifyInterruption({
+        stopReason: "error",
+        errorMessage: "Account deactivated due to payment required. Please update your credit card.",
+      });
+      assert.equal(result.type, "BILLING_HARD_LIMIT");
+    });
+
+    it("identifies TOKEN_LIMIT when stopReason is length", () => {
+      const result = classifyInterruption({
+        stopReason: "length",
+        content: [{ type: "text", text: "Here is the code so far..." }],
+      });
+      assert.equal(result.type, "TOKEN_LIMIT");
+    });
+
+    it("identifies INCOMPLETE_TOOL_CALL when tool call has empty/truncated args", () => {
+      const result = classifyInterruption({
+        stopReason: "length",
+        content: [
+          { type: "text", text: "I will edit the file now." },
+          { type: "toolCall", id: "call_1", name: "edit_file", arguments: {} },
+        ],
+      });
+      assert.equal(result.type, "INCOMPLETE_TOOL_CALL");
+    });
+
+    it("returns NONE for regular completed assistant messages", () => {
+      const result = classifyInterruption({
+        stopReason: "stop",
+        content: [{ type: "text", text: "Task completed successfully." }],
+      });
+      assert.equal(result.type, "NONE");
+    });
+  });
+});
