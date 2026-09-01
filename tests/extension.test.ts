@@ -102,6 +102,7 @@ describe("pi-auto-continue extension", () => {
         pi.sentUserMessages[0].content.includes("Continue from where you left off")
     );
     assert.equal(pi.sentUserMessages[0].options?.deliverAs, "followUp");
+    assert.equal(pi.sentUserMessages[0].options?.streamingBehavior, "followUp");
 
     assert.ok(ctx.notifications.some((n) => n.message.includes("Response truncated")));
   });
@@ -126,6 +127,8 @@ describe("pi-auto-continue extension", () => {
     );
 
     assert.equal(pi.sentUserMessages.length, 1);
+    assert.equal(pi.sentUserMessages[0].options?.deliverAs, "followUp");
+    assert.equal(pi.sentUserMessages[0].options?.streamingBehavior, "followUp");
     assert.ok(
       typeof pi.sentUserMessages[0].content === "string" &&
         pi.sentUserMessages[0].content.includes("rate/quota limit")

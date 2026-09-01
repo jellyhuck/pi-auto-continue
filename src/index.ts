@@ -162,7 +162,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
         pi.sendUserMessage(
           "The previous request encountered a rate/quota limit. Please continue with your task.",
-          { deliverAs: "followUp" }
+          { deliverAs: "followUp", streamingBehavior: "followUp" } as any
         );
       } catch (err) {
         if (ctx.hasUI) {
@@ -205,7 +205,10 @@ When your response is cut off due to token limits or incomplete tool calls, you 
       isExecutingContinuation = true;
       try {
         await sleep(config.tokenLimit.delayMs);
-        pi.sendUserMessage(config.tokenLimit.continuePrompt, { deliverAs: "followUp" });
+        pi.sendUserMessage(config.tokenLimit.continuePrompt, {
+          deliverAs: "followUp",
+          streamingBehavior: "followUp",
+        } as any);
       } catch (err) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -248,7 +251,10 @@ When your response is cut off due to token limits or incomplete tool calls, you 
       isExecutingContinuation = true;
       try {
         await sleep(config.tokenLimit.delayMs);
-        pi.sendUserMessage(config.incompleteToolCall.continuePrompt, { deliverAs: "followUp" });
+        pi.sendUserMessage(config.incompleteToolCall.continuePrompt, {
+          deliverAs: "followUp",
+          streamingBehavior: "followUp",
+        } as any);
       } catch (err) {
         if (ctx.hasUI) {
           ctx.ui.notify(
