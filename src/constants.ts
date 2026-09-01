@@ -19,7 +19,10 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   tokenLimit: {
     enabled: true,
     maxContinuations: 5,
-    delayMs: 1000, // 1 second
+    maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
+    baseDelayMs: 5000, // 5 seconds
+    maxDelayMs: 60000, // 1 minute
+    backoffMultiplier: 2,
     continuePrompt:
       "Continue from where you left off. Do not repeat what you've already written. Pick up exactly where the previous response was cut off.",
   },

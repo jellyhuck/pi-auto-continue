@@ -12,26 +12,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function (pi: ExtensionAPI) {
-  let config: AutoContinueConfig = loadConfig();
+export default function (pi: ExtensionAPI, customSettingsPath?: string) {
+  let config: AutoContinueConfig = loadConfig(customSettingsPath);
   const retryManager = new RetryManager();
   let continuationCount = 0;
+  let continuationStartTime: number | null = null;
   let lastProcessedMessageTimestamp: number | null = null;
   let lastHttpResponse: { status: number; headers: Record<string, string>; time: number } | null = null;
   let isExecutingContinuation = false;
+  let isSendingOwnRetryPrompt = false;
 
   const resetTurnState = () => {
     continuationCount = 0;
+    continuationStartTime = null;
     lastProcessedMessageTimestamp = null;
     lastHttpResponse = null;
   };
 
   // 1. Session start: reload config and reset all state
   pi.on("session_start", async (_event, _ctx) => {
-    config = loadConfig();
+    config = loadConfig(customSettingsPath);
     retryManager.reset();
     resetTurnState();
     isExecutingContinuation = false;
+    isSendingOwnRetryPrompt = false;
   });
 
   // 2. Capture HTTP responses (e.g. 429 with retry-after headers)
@@ -43,10 +47,65 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
+  // 3. Intercept input messages: suppress external extension messages during retries
+  pi.on("input", async (event, ctx) => {
+    if (!config.enabled) return { action: "continue" };
+
+    const isRetrying = retryManager.getState().isRetrying;
+    const isBusy = isRetrying || isExecutingContinuation;
+
+    // A. User interactive / RPC input takes precedence and cancels retry loop
+    if (event.source === "interactive" || event.source === "rpc") {
+      if (isBusy) {
+        retryManager.reset();
+        resetTurnState();
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            "[auto-continue] 🛑 User input received: cancelling active retry/continuation loop.",
+            "info"
+          );
+        }
+      }
+      return { action: "continue" };
+    }
+
+    // B. Programmatic messages from auto-continue itself
+    const isOwnPrompt =
+      isSendingOwnRetryPrompt ||
+      event.text ===
+        "The previous request encountered a rate/quota limit. Please continue with your task." ||
+      event.text === config.tokenLimit.continuePrompt ||
+      event.text === config.incompleteToolCall.continuePrompt;
+
+    if (isOwnPrompt) {
+      return { action: "continue" };
+    }
+
+    // C. Drop third-party extension messages during retry or continuation
+    if (isBusy && event.source === "extension") {
+      const preview =
+        typeof event.text === "string"
+          ? event.text.slice(0, 60).replace(/\r?\n/g, " ")
+          : "";
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          `[auto-continue] ⏸️ Dropped extension message while waiting for retry/continuation${
+            preview ? `: "${preview}..."` : "."
+          }`,
+          "warning"
+        );
+      }
+      return { action: "handled" };
+    }
+
+    return { action: "continue" };
+  });
+
   // 3. Reset turn-level continuation counter on fresh user input
   pi.on("before_agent_start", async (event, _ctx) => {
     if (!isExecutingContinuation) {
       continuationCount = 0;
+      continuationStartTime = null;
       lastProcessedMessageTimestamp = null;
     }
 
@@ -160,10 +219,17 @@ When your response is cut off due to token limits or incomplete tool calls, you 
           );
         }
 
-        pi.sendUserMessage(
-          "The previous request encountered a rate/quota limit. Please continue with your task.",
-          { deliverAs: "followUp", streamingBehavior: "followUp" } as any
-        );
+        isSendingOwnRetryPrompt = true;
+        try {
+          pi.sendUserMessage(
+            "The previous request encountered a rate/quota limit. Please continue with your task.",
+            { deliverAs: "followUp", streamingBehavior: "followUp" } as any
+          );
+        } finally {
+          queueMicrotask(() => {
+            isSendingOwnRetryPrompt = false;
+          });
+        }
       } catch (err) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -183,6 +249,24 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     if (classification.type === "TOKEN_LIMIT") {
       if (!config.tokenLimit.enabled) return;
 
+      const now = Date.now();
+      if (continuationStartTime === null) {
+        continuationStartTime = now;
+      }
+      const elapsedMs = now - continuationStartTime;
+
+      if (elapsedMs >= config.tokenLimit.maxRetryDurationMs) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            `[auto-continue] ⏱️ Token limit continuation stopped: maximum duration of ${formatDuration(
+              config.tokenLimit.maxRetryDurationMs
+            )} exceeded after ${continuationCount} continuation(s).`,
+            "error"
+          );
+        }
+        return;
+      }
+
       if (continuationCount >= config.tokenLimit.maxContinuations) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -193,22 +277,40 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         return;
       }
 
+      const rawDelay =
+        config.tokenLimit.baseDelayMs *
+        Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
+      let delayMs = Math.min(rawDelay, config.tokenLimit.maxDelayMs);
+      const remainingMs = Math.max(0, config.tokenLimit.maxRetryDurationMs - elapsedMs);
+      if (delayMs > remainingMs) {
+        delayMs = remainingMs;
+      }
+
       continuationCount++;
 
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `[auto-continue] ✂️ Response truncated (max tokens reached). Continuing (${continuationCount}/${config.tokenLimit.maxContinuations})...`,
+          `[auto-continue] ✂️ Response truncated (max tokens reached). Continuing (${continuationCount}/${config.tokenLimit.maxContinuations}, delay: ${formatDelay(
+            delayMs
+          )})...`,
           "info"
         );
       }
 
       isExecutingContinuation = true;
       try {
-        await sleep(config.tokenLimit.delayMs);
-        pi.sendUserMessage(config.tokenLimit.continuePrompt, {
-          deliverAs: "followUp",
-          streamingBehavior: "followUp",
-        } as any);
+        await sleep(delayMs);
+        isSendingOwnRetryPrompt = true;
+        try {
+          pi.sendUserMessage(config.tokenLimit.continuePrompt, {
+            deliverAs: "followUp",
+            streamingBehavior: "followUp",
+          } as any);
+        } finally {
+          queueMicrotask(() => {
+            isSendingOwnRetryPrompt = false;
+          });
+        }
       } catch (err) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -229,6 +331,24 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     if (classification.type === "INCOMPLETE_TOOL_CALL") {
       if (!config.incompleteToolCall.enabled) return;
 
+      const now = Date.now();
+      if (continuationStartTime === null) {
+        continuationStartTime = now;
+      }
+      const elapsedMs = now - continuationStartTime;
+
+      if (elapsedMs >= config.tokenLimit.maxRetryDurationMs) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            `[auto-continue] ⏱️ Incomplete tool call continuation stopped: maximum duration of ${formatDuration(
+              config.tokenLimit.maxRetryDurationMs
+            )} exceeded.`,
+            "error"
+          );
+        }
+        return;
+      }
+
       if (continuationCount >= config.tokenLimit.maxContinuations) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -239,22 +359,40 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         return;
       }
 
+      const rawDelay =
+        config.tokenLimit.baseDelayMs *
+        Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
+      let delayMs = Math.min(rawDelay, config.tokenLimit.maxDelayMs);
+      const remainingMs = Math.max(0, config.tokenLimit.maxRetryDurationMs - elapsedMs);
+      if (delayMs > remainingMs) {
+        delayMs = remainingMs;
+      }
+
       continuationCount++;
 
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `[auto-continue] ⚙️ Output cut off mid-tool-call. Requesting continuation (${continuationCount}/${config.tokenLimit.maxContinuations})...`,
+          `[auto-continue] ⚙️ Output cut off mid-tool-call. Requesting continuation (${continuationCount}/${config.tokenLimit.maxContinuations}, delay: ${formatDelay(
+            delayMs
+          )})...`,
           "info"
         );
       }
 
       isExecutingContinuation = true;
       try {
-        await sleep(config.tokenLimit.delayMs);
-        pi.sendUserMessage(config.incompleteToolCall.continuePrompt, {
-          deliverAs: "followUp",
-          streamingBehavior: "followUp",
-        } as any);
+        await sleep(delayMs);
+        isSendingOwnRetryPrompt = true;
+        try {
+          pi.sendUserMessage(config.incompleteToolCall.continuePrompt, {
+            deliverAs: "followUp",
+            streamingBehavior: "followUp",
+          } as any);
+        } finally {
+          queueMicrotask(() => {
+            isSendingOwnRetryPrompt = false;
+          });
+        }
       } catch (err) {
         if (ctx.hasUI) {
           ctx.ui.notify(
@@ -341,6 +479,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         `  Base delay / Max delay: ${formatDelay(config.rateLimit.baseDelayMs)} / ${formatDelay(config.rateLimit.maxDelayMs)}\n` +
         `  Current retry status: ${retryInfo}\n` +
         `  Token limit continuations: ${continuationCount}/${config.tokenLimit.maxContinuations} (enabled: ${config.tokenLimit.enabled ? "yes" : "no"})\n` +
+        `  Token limit base / max delay: ${formatDelay(config.tokenLimit.baseDelayMs)} / ${formatDelay(config.tokenLimit.maxDelayMs)}\n` +
         `  Incomplete tool call handling: ${config.incompleteToolCall.enabled ? "enabled" : "disabled"}`;
 
       if (ctx.hasUI) {

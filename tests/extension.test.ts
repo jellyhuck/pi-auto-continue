@@ -1,5 +1,8 @@
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import extension from "../src/index.ts";
 
 type EventHandler = (event: any, ctx: any) => Promise<any> | any;
@@ -47,12 +50,37 @@ class MockContext {
 }
 
 describe("pi-auto-continue extension", () => {
+  let tmpDir: string;
+  let testSettingsPath: string;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ext-test-"));
+    testSettingsPath = path.join(tmpDir, "settings.json");
+    fs.writeFileSync(
+      testSettingsPath,
+      JSON.stringify({
+        autoContinue: {
+          enabled: true,
+          rateLimit: { baseDelayMs: 20 },
+          tokenLimit: { baseDelayMs: 20 },
+        },
+      })
+    );
+  });
+
+  after(() => {
+    if (tmpDir) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("registers event listeners and slash commands", () => {
     const pi = new MockExtensionAPI();
-    extension(pi as any);
+    extension(pi as any, testSettingsPath);
 
     assert.ok(pi.handlers.has("session_start"));
     assert.ok(pi.handlers.has("after_provider_response"));
+    assert.ok(pi.handlers.has("input"));
     assert.ok(pi.handlers.has("before_agent_start"));
     assert.ok(pi.handlers.has("message_end"));
     assert.ok(pi.handlers.has("agent_settled"));
@@ -63,7 +91,7 @@ describe("pi-auto-continue extension", () => {
 
   it("adds guidance to system prompt in before_agent_start", async () => {
     const pi = new MockExtensionAPI();
-    extension(pi as any);
+    extension(pi as any, testSettingsPath);
 
     const ctx = new MockContext();
     const result = await pi.emit(
@@ -78,7 +106,7 @@ describe("pi-auto-continue extension", () => {
 
   it("handles token limit truncation with auto-continuation message", async () => {
     const pi = new MockExtensionAPI();
-    extension(pi as any);
+    extension(pi as any, testSettingsPath);
 
     const ctx = new MockContext();
 
@@ -109,7 +137,7 @@ describe("pi-auto-continue extension", () => {
 
   it("handles rate limit errors with warning notification and retry message", async () => {
     const pi = new MockExtensionAPI();
-    extension(pi as any);
+    extension(pi as any, testSettingsPath);
 
     const ctx = new MockContext();
 
@@ -155,9 +183,117 @@ describe("pi-auto-continue extension", () => {
     );
   });
 
+  it("drops third-party extension messages and notifies UI when in retrying state", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+
+    // Trigger a rate limit to enter retrying state
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "HTTP 429: Too Many Requests",
+          timestamp: 3000,
+        },
+      },
+      ctx
+    );
+
+    // External extension attempts to send a message during retrying
+    const extInputResult = await pi.emit(
+      "input",
+      {
+        type: "input",
+        source: "extension",
+        text: "Plan mode requires a TODO list before finishing the turn.",
+      },
+      ctx
+    );
+
+    // Message should be cleanly handled (suppressed)
+    assert.deepEqual(extInputResult, { action: "handled" });
+
+    // Warning notification should be visible in UI
+    assert.ok(
+      ctx.notifications.some(
+        (n) =>
+          n.type === "warning" &&
+          n.message.includes("Dropped extension message while waiting for retry/continuation") &&
+          n.message.includes("Plan mode requires a TODO list")
+      )
+    );
+
+    // Auto-continue's own retry message should pass through
+    const ownInputResult = await pi.emit(
+      "input",
+      {
+        type: "input",
+        source: "extension",
+        text: "The previous request encountered a rate/quota limit. Please continue with your task.",
+      },
+      ctx
+    );
+    assert.deepEqual(ownInputResult, { action: "continue" });
+  });
+
+  it("allows interactive user input to cancel active retry loop", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+
+    // Trigger rate limit
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Rate limit exceeded (429)",
+          timestamp: 4000,
+        },
+      },
+      ctx
+    );
+
+    // User types interactive message
+    const userInputResult = await pi.emit(
+      "input",
+      {
+        type: "input",
+        source: "interactive",
+        text: "Forget that, help me with a new task instead",
+      },
+      ctx
+    );
+
+    assert.deepEqual(userInputResult, { action: "continue" });
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("User input received: cancelling active retry/continuation loop")
+      )
+    );
+
+    // Subsequent extension message now passes because retry loop was cancelled
+    const extResult = await pi.emit(
+      "input",
+      {
+        type: "input",
+        source: "extension",
+        text: "Normal extension message",
+      },
+      ctx
+    );
+    assert.deepEqual(extResult, { action: "continue" });
+  });
+
   it("handles /auto-continue status command", async () => {
     const pi = new MockExtensionAPI();
-    extension(pi as any);
+    extension(pi as any, testSettingsPath);
 
     const ctx = new MockContext();
     const cmd = pi.commands.get("auto-continue");

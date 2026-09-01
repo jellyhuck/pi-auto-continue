@@ -65,7 +65,10 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
     "tokenLimit": {
       "enabled": true,
       "maxContinuations": 5,
-      "delayMs": 1000,
+      "maxRetryDurationMs": "5h",
+      "baseDelayMs": "5s",
+      "maxDelayMs": "1m",
+      "backoffMultiplier": 2,
       "continuePrompt": "Continue from where you left off. Do not repeat what you've already written. Pick up exactly where the previous response was cut off."
     },
     "incompleteToolCall": {
@@ -83,13 +86,16 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
 | `enabled` | `boolean` | `true` | Master switch to enable or disable the extension. |
 | `rateLimit.enabled` | `boolean` | `true` | Whether to automatically retry on rate limits and quota exhaustion. |
 | `rateLimit.maxRetryDurationMs` | `number \| string` | `18000000` (`"5h"`) | Maximum duration to keep retrying after the first rate limit failure before giving up. |
-| `rateLimit.baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Starting delay for exponential backoff. |
+| `rateLimit.baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Starting delay for exponential backoff on rate limit retries. |
 | `rateLimit.maxDelayMs` | `number \| string` | `60000` (`"1m"`) | Maximum delay cap for a single retry attempt. |
 | `rateLimit.backoffMultiplier` | `number` | `2` | Multiplier for exponential backoff. |
 | `rateLimit.jitter` | `boolean` | `true` | Adds ±15% random variation to delays to avoid synchronized retries. |
 | `tokenLimit.enabled` | `boolean` | `true` | Whether to continue responses truncated by max output tokens. |
 | `tokenLimit.maxContinuations` | `number` | `5` | Maximum consecutive continuations in a single turn. |
-| `tokenLimit.delayMs` | `number \| string` | `1000` (`"1s"`) | Delay before sending continuation prompt. |
+| `tokenLimit.maxRetryDurationMs` | `number \| string` | `18000000` (`"5h"`) | Maximum total duration to keep continuing truncated responses before giving up. |
+| `tokenLimit.baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Starting delay for exponential backoff on token limit continuations. |
+| `tokenLimit.maxDelayMs` | `number \| string` | `60000` (`"1m"`) | Maximum delay cap for a single token limit continuation attempt. |
+| `tokenLimit.backoffMultiplier` | `number` | `2` | Multiplier for exponential backoff on token limit continuations. |
 | `tokenLimit.continuePrompt` | `string` | *(default prompt)* | Prompt sent to LLM to resume text generation. |
 | `incompleteToolCall.enabled` | `boolean` | `true` | Whether to continue responses cut off mid tool call. |
 | `incompleteToolCall.continuePrompt` | `string` | *(default prompt)* | Prompt sent to LLM to complete tool call. |

@@ -52,7 +52,10 @@ describe("config", () => {
           },
           tokenLimit: {
             maxContinuations: 8,
-            delayMs: 2000,
+            maxRetryDurationMs: "1h",
+            baseDelayMs: "2s",
+            maxDelayMs: "30s",
+            backoffMultiplier: 3,
             continuePrompt: "Keep going please.",
           },
         },
@@ -68,7 +71,10 @@ describe("config", () => {
         assert.equal(config.rateLimit.maxDelayMs, 300000);
         assert.equal(config.rateLimit.jitter, false);
         assert.equal(config.tokenLimit.maxContinuations, 8);
-        assert.equal(config.tokenLimit.delayMs, 2000);
+        assert.equal(config.tokenLimit.maxRetryDurationMs, 3600000);
+        assert.equal(config.tokenLimit.baseDelayMs, 2000);
+        assert.equal(config.tokenLimit.maxDelayMs, 30000);
+        assert.equal(config.tokenLimit.backoffMultiplier, 3);
         assert.equal(config.tokenLimit.continuePrompt, "Keep going please.");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -100,7 +106,7 @@ describe("config", () => {
         const config = loadConfig(tmpFile);
         assert.equal(config.enabled, true);
         assert.equal(config.tokenLimit.maxContinuations, 4);
-        assert.equal(config.tokenLimit.delayMs, 1500);
+        assert.equal(config.tokenLimit.baseDelayMs, DEFAULT_CONFIG.tokenLimit.baseDelayMs);
         assert.equal(config.rateLimit.enabled, true);
         assert.ok(config.rateLimit.maxRetryDurationMs >= DEFAULT_MAX_RETRY_DURATION_MS);
       } finally {

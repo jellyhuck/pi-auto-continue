@@ -91,10 +91,25 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
         ? rawConfig.maxResumes
         : DEFAULT_CONFIG.tokenLimit.maxContinuations;
 
-  const tokenDelayMs = parseDuration(
-    tokenLimitRaw.delayMs ?? rawConfig.delayMs,
-    DEFAULT_CONFIG.tokenLimit.delayMs
+  const tokenMaxRetryDurationMs = parseDuration(
+    tokenLimitRaw.maxRetryDurationMs,
+    DEFAULT_CONFIG.tokenLimit.maxRetryDurationMs
   );
+
+  const tokenBaseDelayMs = parseDuration(
+    tokenLimitRaw.baseDelayMs,
+    DEFAULT_CONFIG.tokenLimit.baseDelayMs
+  );
+
+  const tokenMaxDelayMs = parseDuration(
+    tokenLimitRaw.maxDelayMs,
+    DEFAULT_CONFIG.tokenLimit.maxDelayMs
+  );
+
+  const tokenBackoffMultiplier =
+    typeof tokenLimitRaw.backoffMultiplier === "number" && tokenLimitRaw.backoffMultiplier >= 1
+      ? tokenLimitRaw.backoffMultiplier
+      : DEFAULT_CONFIG.tokenLimit.backoffMultiplier;
 
   return {
     enabled: rawConfig.enabled !== false,
@@ -112,7 +127,10 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
     tokenLimit: {
       enabled: tokenLimitRaw.enabled !== false,
       maxContinuations: Math.max(1, maxContinuations),
-      delayMs: tokenDelayMs,
+      maxRetryDurationMs: tokenMaxRetryDurationMs,
+      baseDelayMs: tokenBaseDelayMs,
+      maxDelayMs: tokenMaxDelayMs,
+      backoffMultiplier: tokenBackoffMultiplier,
       continuePrompt:
         tokenLimitRaw.continuePrompt ||
         rawConfig.continuePrompt ||

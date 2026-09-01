@@ -25,8 +25,17 @@ export interface TokenLimitConfig {
   enabled: boolean;
   /** Maximum consecutive continuations for token limit cutoffs in a single user turn (default: 5) */
   maxContinuations: number;
-  /** Delay in ms before sending continuation prompt (default: 1,000 ms) */
-  delayMs: number;
+  /**
+   * Maximum total duration in milliseconds to keep continuing after the first token limit truncation.
+   * Continuations stop once this duration has elapsed (default: 18,000,000 ms = 5 hours).
+   */
+  maxRetryDurationMs: number;
+  /** Base delay in ms for exponential backoff on continuation (default: 5,000 ms = 5 seconds) */
+  baseDelayMs: number;
+  /** Maximum single delay in ms (default: 60,000 ms = 1 minute) */
+  maxDelayMs: number;
+  /** Multiplier for exponential backoff (default: 2) */
+  backoffMultiplier: number;
   /** Prompt sent when response is truncated due to max output tokens */
   continuePrompt: string;
 }
