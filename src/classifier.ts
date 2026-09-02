@@ -5,14 +5,20 @@ import {
 } from "./constants.ts";
 import type { ClassificationResult } from "./types.ts";
 
+export interface RetryAfterInfo {
+  delayMs: number | null;
+  expectedResetTime: number | null;
+  hasHeader: boolean;
+}
+
 /**
- * Extracts a retry delay in milliseconds from HTTP response headers or error message text.
- * Returns null if no explicit retry delay is specified.
+ * Extracts retry delay and expected reset time from HTTP response headers or error message text.
  */
-export function extractRetryAfterDelay(
+export function extractRetryAfterInfo(
   headers?: Record<string, string>,
-  errorMessage?: string
-): number | null {
+  errorMessage?: string,
+  now = Date.now()
+): RetryAfterInfo {
   // 1. Check HTTP response headers
   if (headers) {
     const normalizedHeaders: Record<string, string> = {};
@@ -25,12 +31,21 @@ export function extractRetryAfterDelay(
     if (retryAfter) {
       const parsedSeconds = parseFloat(retryAfter);
       if (!isNaN(parsedSeconds) && parsedSeconds >= 0) {
-        return Math.round(parsedSeconds * 1000);
+        const delayMs = Math.round(parsedSeconds * 1000);
+        return {
+          delayMs,
+          expectedResetTime: now + delayMs,
+          hasHeader: true,
+        };
       }
       const parsedDate = Date.parse(retryAfter);
       if (!isNaN(parsedDate)) {
-        const diffMs = parsedDate - Date.now();
-        return diffMs > 0 ? diffMs : 0;
+        const diffMs = parsedDate - now;
+        return {
+          delayMs: diffMs > 0 ? diffMs : 0,
+          expectedResetTime: parsedDate,
+          hasHeader: true,
+        };
       }
     }
 
@@ -39,7 +54,12 @@ export function extractRetryAfterDelay(
     if (retryAfterMs) {
       const parsedMs = parseFloat(retryAfterMs);
       if (!isNaN(parsedMs) && parsedMs >= 0) {
-        return Math.round(parsedMs);
+        const delayMs = Math.round(parsedMs);
+        return {
+          delayMs,
+          expectedResetTime: now + delayMs,
+          hasHeader: true,
+        };
       }
     }
 
@@ -53,10 +73,20 @@ export function extractRetryAfterDelay(
       if (!isNaN(parsed) && parsed > 0) {
         // Could be epoch seconds (> 1e9) or delta seconds
         if (parsed > 1e9) {
-          const diffMs = parsed * 1000 - Date.now();
-          return diffMs > 0 ? diffMs : 0;
+          const expectedResetTime = Math.round(parsed * 1000);
+          const diffMs = expectedResetTime - now;
+          return {
+            delayMs: diffMs > 0 ? diffMs : 0,
+            expectedResetTime,
+            hasHeader: true,
+          };
         } else {
-          return Math.round(parsed * 1000);
+          const delayMs = Math.round(parsed * 1000);
+          return {
+            delayMs,
+            expectedResetTime: now + delayMs,
+            hasHeader: true,
+          };
         }
       }
     }
@@ -72,15 +102,21 @@ export function extractRetryAfterDelay(
       const num = parseFloat(secMatch[1]);
       const unit = (secMatch[0].match(/(s|sec|seconds|m|min|minutes|h|hours|ms)$/i)?.[1] || "s").toLowerCase();
       if (!isNaN(num) && num > 0) {
+        let delayMs: number;
         if (unit.startsWith("m") && !unit.startsWith("ms")) {
-          return Math.round(num * 60 * 1000);
+          delayMs = Math.round(num * 60 * 1000);
         } else if (unit.startsWith("h")) {
-          return Math.round(num * 3600 * 1000);
+          delayMs = Math.round(num * 3600 * 1000);
         } else if (unit === "ms") {
-          return Math.round(num);
+          delayMs = Math.round(num);
         } else {
-          return Math.round(num * 1000);
+          delayMs = Math.round(num * 1000);
         }
+        return {
+          delayMs,
+          expectedResetTime: now + delayMs,
+          hasHeader: false,
+        };
       }
     }
 
@@ -91,13 +127,33 @@ export function extractRetryAfterDelay(
     if (dateMatch && dateMatch[1]) {
       const parsed = Date.parse(dateMatch[1]);
       if (!isNaN(parsed)) {
-        const diffMs = parsed - Date.now();
-        return diffMs > 0 ? diffMs : 0;
+        const diffMs = parsed - now;
+        return {
+          delayMs: diffMs > 0 ? diffMs : 0,
+          expectedResetTime: parsed,
+          hasHeader: false,
+        };
       }
     }
   }
 
-  return null;
+  return {
+    delayMs: null,
+    expectedResetTime: null,
+    hasHeader: false,
+  };
+}
+
+/**
+ * Extracts a retry delay in milliseconds from HTTP response headers or error message text.
+ * Returns null if no explicit retry delay is specified.
+ */
+export function extractRetryAfterDelay(
+  headers?: Record<string, string>,
+  errorMessage?: string,
+  now = Date.now()
+): number | null {
+  return extractRetryAfterInfo(headers, errorMessage, now).delayMs;
 }
 
 export interface ClassifyInput {
@@ -113,7 +169,7 @@ export interface ClassifyInput {
  */
 export function classifyInterruption(input: ClassifyInput): ClassificationResult {
   const { stopReason, errorMessage, content, httpStatus, httpHeaders } = input;
-  const explicitDelay = extractRetryAfterDelay(httpHeaders, errorMessage);
+  const retryInfo = extractRetryAfterInfo(httpHeaders, errorMessage);
 
   // 1. Direct HTTP 429 / 503 / 529 Rate Limit or Overload
   if (httpStatus === 429) {
@@ -121,7 +177,9 @@ export function classifyInterruption(input: ClassifyInput): ClassificationResult
       type: "RATE_LIMIT",
       reason: "HTTP 429 Too Many Requests (Rate Limited)",
       errorMessage: errorMessage || "HTTP 429 Too Many Requests",
-      retryAfterMs: explicitDelay ?? undefined,
+      retryAfterMs: retryInfo.delayMs ?? undefined,
+      retryAfterHeaderReceived: retryInfo.hasHeader,
+      expectedResetTime: retryInfo.expectedResetTime ?? undefined,
       rawStopReason: stopReason,
     };
   }
@@ -131,7 +189,9 @@ export function classifyInterruption(input: ClassifyInput): ClassificationResult
       type: "RATE_LIMIT",
       reason: `HTTP ${httpStatus} Provider Overloaded`,
       errorMessage: errorMessage || `HTTP ${httpStatus} Service Unavailable / Overloaded`,
-      retryAfterMs: explicitDelay ?? undefined,
+      retryAfterMs: retryInfo.delayMs ?? undefined,
+      retryAfterHeaderReceived: retryInfo.hasHeader,
+      expectedResetTime: retryInfo.expectedResetTime ?? undefined,
       rawStopReason: stopReason,
     };
   }
@@ -166,7 +226,9 @@ export function classifyInterruption(input: ClassifyInput): ClassificationResult
         type: "RATE_LIMIT",
         reason: "Provider rate limit or quota exceeded",
         errorMessage: errorText,
-        retryAfterMs: explicitDelay ?? undefined,
+        retryAfterMs: retryInfo.delayMs ?? undefined,
+        retryAfterHeaderReceived: retryInfo.hasHeader,
+        expectedResetTime: retryInfo.expectedResetTime ?? undefined,
         rawStopReason: stopReason,
       };
     }

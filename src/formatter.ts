@@ -62,3 +62,28 @@ export function truncateErrorMessage(error?: string, maxLength = 120): string {
   }
   return singleLine.slice(0, maxLength - 3) + "...";
 }
+
+/**
+ * Formats a Date or millisecond timestamp to zero-padded local time "HH:MM:SS".
+ * Example: "11:29:28"
+ */
+export function formatTime(date: Date | number = new Date()): string {
+  const d = typeof date === "number" ? new Date(date) : date;
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const seconds = String(d.getSeconds()).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Formats a Date or millisecond timestamp to local "YYYY-MM-DD HH:MM:SS".
+ * Example: "2026-09-02 11:29:28"
+ */
+export function formatDateTime(date: Date | number = new Date()): string {
+  const d = typeof date === "number" ? new Date(date) : date;
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const time = formatTime(d);
+  return `${year}-${month}-${day} ${time}`;
+}

@@ -73,6 +73,10 @@ export interface ClassificationResult {
   errorMessage?: string;
   /** Explicit delay in ms extracted from Retry-After headers or error text */
   retryAfterMs?: number;
+  /** Whether an explicit HTTP retry-after / reset header was received */
+  retryAfterHeaderReceived?: boolean;
+  /** Expected epoch timestamp (ms) when quota or tokens reset */
+  expectedResetTime?: number;
   rawStopReason?: string;
 }
 
@@ -83,6 +87,10 @@ export interface RetryState {
   lastDelayMs: number;
   lastErrorMessage?: string;
   nextRetryTime?: number;
+  /** Whether the active or last retry was triggered by a Retry-After header */
+  retryAfterHeaderReceived?: boolean;
+  /** Expected epoch timestamp (ms) when tokens/quota reset from Retry-After header */
+  expectedTokenResetTime?: number;
 }
 
 export interface ContinuationState {

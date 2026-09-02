@@ -1,4 +1,4 @@
-import { formatDelay, formatDuration } from "./formatter.ts";
+import { formatDateTime, formatDelay, formatDuration } from "./formatter.ts";
 import type { AutoContinueConfig, RetryState } from "./types.ts";
 
 export interface RetryCheckResult {
@@ -21,6 +21,8 @@ export class RetryManager {
     attempt: 0,
     lastDelayMs: 0,
     lastErrorMessage: undefined,
+    retryAfterHeaderReceived: false,
+    expectedTokenResetTime: undefined,
   };
 
   /**
@@ -30,12 +32,16 @@ export class RetryManager {
    * @param errorMessage The observed error message
    * @param explicitDelayMs Optional explicit delay from Retry-After headers/hints
    * @param now Current timestamp in ms (defaults to Date.now())
+   * @param expectedResetTime Optional timestamp (ms) when quota/tokens reset
+   * @param retryAfterHeaderReceived Whether an explicit HTTP Retry-After header was received
    */
   public evaluateRetry(
     config: AutoContinueConfig,
     errorMessage: string,
     explicitDelayMs?: number | null,
-    now = Date.now()
+    now = Date.now(),
+    expectedResetTime?: number | null,
+    retryAfterHeaderReceived?: boolean
   ): RetryCheckResult {
     const rateLimitConfig = config.rateLimit;
 
@@ -107,6 +113,13 @@ export class RetryManager {
     this.state.lastDelayMs = delayMs;
     this.state.lastErrorMessage = errorMessage;
     this.state.nextRetryTime = now + delayMs;
+    this.state.retryAfterHeaderReceived = Boolean(retryAfterHeaderReceived);
+    this.state.expectedTokenResetTime =
+      retryAfterHeaderReceived && expectedResetTime
+        ? expectedResetTime
+        : retryAfterHeaderReceived
+        ? now + delayMs
+        : undefined;
 
     return {
       canRetry: true,
@@ -129,6 +142,8 @@ export class RetryManager {
       lastDelayMs: 0,
       lastErrorMessage: undefined,
       nextRetryTime: undefined,
+      retryAfterHeaderReceived: false,
+      expectedTokenResetTime: undefined,
     };
   }
 
@@ -150,13 +165,18 @@ export class RetryManager {
     const elapsed = now - this.state.startTime;
     const remaining = Math.max(0, config.rateLimit.maxRetryDurationMs - elapsed);
 
-    return (
+    let summary =
       `Active Retry Loop:\n` +
       `  Attempt: ${this.state.attempt}\n` +
       `  Elapsed: ${formatDuration(elapsed)} / Max: ${formatDuration(config.rateLimit.maxRetryDurationMs)}\n` +
       `  Remaining: ${formatDuration(remaining)}\n` +
       `  Last delay: ${formatDelay(this.state.lastDelayMs)}\n` +
-      `  Last error: ${this.state.lastErrorMessage || "None"}`
-    );
+      `  Last error: ${this.state.lastErrorMessage || "None"}`;
+
+    if (this.state.retryAfterHeaderReceived && this.state.expectedTokenResetTime) {
+      summary += `\n  Expected token reset time: ${formatDateTime(this.state.expectedTokenResetTime)}`;
+    }
+
+    return summary;
   }
 }

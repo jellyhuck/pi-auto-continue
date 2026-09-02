@@ -1,8 +1,49 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyInterruption, extractRetryAfterDelay } from "../src/classifier.ts";
+import {
+  classifyInterruption,
+  extractRetryAfterDelay,
+  extractRetryAfterInfo,
+} from "../src/classifier.ts";
 
 describe("classifier", () => {
+  describe("extractRetryAfterInfo", () => {
+    it("extracts delay, expectedResetTime, and header flag from Retry-After", () => {
+      const now = 1000000;
+      const info = extractRetryAfterInfo({ "retry-after": "30" }, undefined, now);
+      assert.equal(info.delayMs, 30000);
+      assert.equal(info.expectedResetTime, now + 30000);
+      assert.equal(info.hasHeader, true);
+    });
+
+    it("extracts timestamp from HTTP date Retry-After header", () => {
+      const futureDate = "Wed, 21 Oct 2026 07:28:00 GMT";
+      const epoch = Date.parse(futureDate);
+      const now = epoch - 20000;
+      const info = extractRetryAfterInfo({ "retry-after": futureDate }, undefined, now);
+      assert.equal(info.delayMs, 20000);
+      assert.equal(info.expectedResetTime, epoch);
+      assert.equal(info.hasHeader, true);
+    });
+
+    it("extracts from x-ratelimit-reset epoch timestamp", () => {
+      const epochSeconds = 1758440000;
+      const now = epochSeconds * 1000 - 15000;
+      const info = extractRetryAfterInfo({ "x-ratelimit-reset": String(epochSeconds) }, undefined, now);
+      assert.equal(info.delayMs, 15000);
+      assert.equal(info.expectedResetTime, epochSeconds * 1000);
+      assert.equal(info.hasHeader, true);
+    });
+
+    it("marks hasHeader false when delay is extracted from error message text", () => {
+      const now = 1000000;
+      const info = extractRetryAfterInfo(undefined, "Please retry after 45 seconds.", now);
+      assert.equal(info.delayMs, 45000);
+      assert.equal(info.expectedResetTime, now + 45000);
+      assert.equal(info.hasHeader, false);
+    });
+  });
+
   describe("extractRetryAfterDelay", () => {
     it("extracts integer seconds from Retry-After header", () => {
       const delay = extractRetryAfterDelay({ "retry-after": "30" });
@@ -48,6 +89,8 @@ describe("classifier", () => {
       });
       assert.equal(result.type, "RATE_LIMIT");
       assert.equal(result.retryAfterMs, 10000);
+      assert.equal(result.retryAfterHeaderReceived, true);
+      assert.ok(typeof result.expectedResetTime === "number");
     });
 
     it("identifies HTTP 503 / 529 as RATE_LIMIT / overloaded", () => {

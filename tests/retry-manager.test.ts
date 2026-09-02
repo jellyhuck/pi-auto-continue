@@ -19,6 +19,7 @@ describe("RetryManager", () => {
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
         baseDelayMs: 2000,
+        backoffMultiplier: 2,
         jitter: false,
       },
     };
@@ -152,5 +153,11 @@ describe("RetryManager", () => {
     assert.ok(summary.includes("Active Retry Loop:"));
     assert.ok(summary.includes("Attempt: 1"));
     assert.ok(summary.includes("HTTP 429 Quota Exceeded"));
+    assert.equal(summary.includes("Expected token reset time:"), false);
+
+    // When Retry-After header is received
+    manager.evaluateRetry(DEFAULT_CONFIG, "HTTP 429", 30000, 1010000, 1040000, true);
+    const summaryWithReset = manager.getStatusSummary(DEFAULT_CONFIG, 1010000);
+    assert.ok(summaryWithReset.includes("Expected token reset time:"));
   });
 });

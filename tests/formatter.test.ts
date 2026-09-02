@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatDelay, formatDuration, truncateErrorMessage } from "../src/formatter.ts";
+import {
+  formatDateTime,
+  formatDelay,
+  formatDuration,
+  formatTime,
+  truncateErrorMessage,
+} from "../src/formatter.ts";
 
 describe("formatter", () => {
   describe("formatDuration", () => {
@@ -65,6 +71,30 @@ describe("formatter", () => {
       const truncated = truncateErrorMessage(long, 50);
       assert.equal(truncated.length, 50);
       assert.ok(truncated.endsWith("..."));
+    });
+  });
+
+  describe("formatTime", () => {
+    it("formats local time to HH:MM:SS format", () => {
+      const date = new Date(2026, 8, 2, 14, 5, 9);
+      assert.equal(formatTime(date), "14:05:09");
+    });
+
+    it("formats milliseconds timestamp with padding", () => {
+      const date = new Date(2026, 8, 2, 9, 1, 2);
+      assert.equal(formatTime(date.getTime()), "09:01:02");
+    });
+  });
+
+  describe("formatDateTime", () => {
+    it("formats date and time to YYYY-MM-DD HH:MM:SS format", () => {
+      const date = new Date(2026, 8, 2, 14, 5, 9);
+      assert.equal(formatDateTime(date), "2026-09-02 14:05:09");
+    });
+
+    it("handles zero-padded single-digit months, days, hours, mins, secs", () => {
+      const date = new Date(2026, 0, 5, 8, 4, 3);
+      assert.equal(formatDateTime(date), "2026-01-05 08:04:03");
     });
   });
 });

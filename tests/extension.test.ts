@@ -307,4 +307,107 @@ describe("pi-auto-continue extension", () => {
       )
     );
   });
+
+  it("includes timestamp [HH:MM:SS] in all UI notifications", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const cmd = pi.commands.get("auto-continue");
+    await cmd.handler("enable", ctx);
+    await cmd.handler("disable", ctx);
+    await cmd.handler("reset", ctx);
+
+    assert.equal(ctx.notifications.length, 3);
+    const timeRegex = /^\[auto-continue\] \[\d{2}:\d{2}:\d{2}\]/;
+    for (const notif of ctx.notifications) {
+      assert.ok(
+        timeRegex.test(notif.message),
+        `Notification "${notif.message}" should match [auto-continue] [HH:MM:SS]`
+      );
+    }
+  });
+
+  it("reformats /auto-continue status response to cleanly separate Rate Limit and Token Limit", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const cmd = pi.commands.get("auto-continue");
+    await cmd.handler("status", ctx);
+
+    assert.equal(ctx.notifications.length, 1);
+    const msg = ctx.notifications[0].message;
+
+    assert.ok(msg.includes("Auto-Continue Status:"));
+    assert.ok(msg.includes("Global:"));
+    assert.ok(msg.includes("Rate Limit Settings & Status:"));
+    assert.ok(msg.includes("Token Limit Settings & Status:"));
+    assert.ok(msg.includes("Backoff multiplier:"));
+    // When idle and no Retry-After header received, expected token reset time is omitted
+    assert.equal(msg.includes("Expected token reset time:"), false);
+  });
+
+  it("prints expected token reset time in YYYY-MM-DD HH:MM:SS format when Retry-After header is received", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+
+    // Provider sends 429 with retry-after header (20ms delay for fast test execution)
+    await pi.emit(
+      "after_provider_response",
+      {
+        status: 429,
+        headers: { "retry-after": "0.02" },
+      },
+      ctx
+    );
+
+    // Message ends with rate limit error
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "HTTP 429 Too Many Requests",
+          timestamp: 5000,
+        },
+      },
+      ctx
+    );
+
+    // 1. Notification should contain Expected token reset time in YYYY-MM-DD HH:MM:SS format
+    const warningNotif = ctx.notifications.find((n) =>
+      n.message.includes("Rate limit / quota error detected")
+    );
+    assert.ok(warningNotif, "Warning notification should be emitted");
+    assert.ok(
+      warningNotif.message.includes("Expected token reset time:"),
+      "Should include expected token reset time label"
+    );
+    const dateRegex = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
+    assert.ok(
+      dateRegex.test(warningNotif.message),
+      `Expected date format YYYY-MM-DD HH:MM:SS in notification: ${warningNotif.message}`
+    );
+
+    // 2. Status command should also display the expected token reset time in YYYY-MM-DD HH:MM:SS format
+    const cmd = pi.commands.get("auto-continue");
+    await cmd.handler("status", ctx);
+
+    const statusNotif = ctx.notifications.find((n) =>
+      n.message.includes("Auto-Continue Status:")
+    );
+    assert.ok(statusNotif, "Status notification should be emitted");
+    assert.ok(
+      statusNotif.message.includes("Expected token reset time:"),
+      "Status should print expected token reset time"
+    );
+    assert.ok(
+      dateRegex.test(statusNotif.message),
+      `Expected date format YYYY-MM-DD HH:MM:SS in status: ${statusNotif.message}`
+    );
+  });
 });

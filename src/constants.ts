@@ -12,8 +12,8 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
     enabled: true,
     maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
     baseDelayMs: 5000, // 5 seconds
-    maxDelayMs: 300000, // 5 minutes
-    backoffMultiplier: 2,
+    maxDelayMs: 600000, // 10 minutes
+    backoffMultiplier: 3,
     jitter: true,
   },
   tokenLimit: {
