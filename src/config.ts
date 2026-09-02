@@ -34,6 +34,49 @@ export function parseDuration(val: unknown, fallback: number): number {
 }
 
 /**
+ * Parses time strings like "14:30", "9:15", "14:30:00", "2:30pm" to target epoch timestamp (ms).
+ * If the target time has already passed today, it targets the next occurrence tomorrow.
+ * Returns null if format is invalid.
+ */
+export function parseTargetTime(
+  val: unknown,
+  now: Date | number = new Date()
+): { targetTimeMs: number; hours: number; minutes: number; seconds: number } | null {
+  if (typeof val !== "string") return null;
+  const trimmed = val.trim().toLowerCase();
+  const match = trimmed.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?\s*(am|pm)?$/);
+  if (!match) return null;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const seconds = match[3] !== undefined ? parseInt(match[3], 10) : 0;
+  const ampm = match[4];
+
+  if (ampm) {
+    if (ampm === "pm" && hours < 12) {
+      hours += 12;
+    } else if (ampm === "am" && hours === 12) {
+      hours = 0;
+    }
+  }
+
+  const nowDate = typeof now === "number" ? new Date(now) : now;
+  const target = new Date(nowDate.getTime());
+  target.setHours(hours, minutes, seconds, 0);
+
+  if (target.getTime() <= nowDate.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+
+  return {
+    targetTimeMs: target.getTime(),
+    hours,
+    minutes,
+    seconds,
+  };
+}
+
+/**
  * Loads and merges configuration from Pi's settings.json.
  */
 export function loadConfig(customSettingsPath?: string): AutoContinueConfig {

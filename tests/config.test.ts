@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig, parseDuration } from "../src/config.ts";
+import { loadConfig, parseDuration, parseTargetTime } from "../src/config.ts";
 import { DEFAULT_CONFIG, DEFAULT_MAX_RETRY_DURATION_MS } from "../src/constants.ts";
 
 describe("config", () => {
@@ -26,6 +26,81 @@ describe("config", () => {
       assert.equal(parseDuration(-100, 5000), 5000);
       assert.equal(parseDuration(null, 5000), 5000);
       assert.equal(parseDuration(undefined, 5000), 5000);
+    });
+  });
+
+  describe("parseTargetTime", () => {
+    it("parses 24-hour HH:MM format", () => {
+      // Mock reference time: 2026-09-02 12:00:00 local time
+      const baseDate = new Date(2026, 8, 2, 12, 0, 0);
+      const res = parseTargetTime("14:30", baseDate);
+
+      assert.ok(res);
+      assert.equal(res.hours, 14);
+      assert.equal(res.minutes, 30);
+      assert.equal(res.seconds, 0);
+
+      const expectedDate = new Date(2026, 8, 2, 14, 30, 0);
+      assert.equal(res.targetTimeMs, expectedDate.getTime());
+    });
+
+    it("parses HH:MM:SS format with seconds", () => {
+      const baseDate = new Date(2026, 8, 2, 12, 0, 0);
+      const res = parseTargetTime("14:30:45", baseDate);
+
+      assert.ok(res);
+      assert.equal(res.hours, 14);
+      assert.equal(res.minutes, 30);
+      assert.equal(res.seconds, 45);
+
+      const expectedDate = new Date(2026, 8, 2, 14, 30, 45);
+      assert.equal(res.targetTimeMs, expectedDate.getTime());
+    });
+
+    it("parses 12-hour format with AM/PM", () => {
+      const baseDate = new Date(2026, 8, 2, 10, 0, 0);
+
+      const pmRes = parseTargetTime("2:30pm", baseDate);
+      assert.ok(pmRes);
+      assert.equal(pmRes.hours, 14);
+      assert.equal(pmRes.minutes, 30);
+
+      const amRes = parseTargetTime("11:15 am", baseDate);
+      assert.ok(amRes);
+      assert.equal(amRes.hours, 11);
+      assert.equal(amRes.minutes, 15);
+
+      const midnightRes = parseTargetTime("12:00am", baseDate);
+      assert.ok(midnightRes);
+      assert.equal(midnightRes.hours, 0);
+
+      const noonRes = parseTargetTime("12:30pm", baseDate);
+      assert.ok(noonRes);
+      assert.equal(noonRes.hours, 12);
+    });
+
+    it("rolls over to tomorrow if target time has already passed today", () => {
+      // Mock reference time: 2026-09-02 15:00:00 local time
+      const baseDate = new Date(2026, 8, 2, 15, 0, 0);
+      // Scheduled for 14:00 (which passed 1 hour ago today)
+      const res = parseTargetTime("14:00", baseDate);
+
+      assert.ok(res);
+      assert.equal(res.hours, 14);
+      assert.equal(res.minutes, 0);
+
+      const expectedTomorrow = new Date(2026, 8, 3, 14, 0, 0);
+      assert.equal(res.targetTimeMs, expectedTomorrow.getTime());
+    });
+
+    it("returns null for invalid strings or out-of-range values", () => {
+      assert.equal(parseTargetTime("invalid"), null);
+      assert.equal(parseTargetTime("25:00"), null);
+      assert.equal(parseTargetTime("14:60"), null);
+      assert.equal(parseTargetTime("14:30:99"), null);
+      assert.equal(parseTargetTime(""), null);
+      assert.equal(parseTargetTime(null), null);
+      assert.equal(parseTargetTime(undefined), null);
     });
   });
 

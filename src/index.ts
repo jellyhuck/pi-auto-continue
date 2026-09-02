@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { classifyInterruption, extractRetryAfterInfo } from "./classifier.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, parseTargetTime } from "./config.ts";
 import {
   formatDateTime,
   formatDelay,
@@ -8,19 +8,36 @@ import {
   formatTime,
   truncateErrorMessage,
 } from "./formatter.ts";
-import { RetryManager } from "./retry-manager.ts";
+import { RetryManager, type RetryCheckResult } from "./retry-manager.ts";
 import type { AutoContinueConfig } from "./types.ts";
 
 /**
- * Utility helper to pause execution for a given number of milliseconds.
+ * Utility helper to pause execution for a given number of milliseconds, cancellable via AbortSignal.
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function cancellableSleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      resolve(true);
+    }, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+      { once: true }
+    );
+  });
 }
 
 export default function (pi: ExtensionAPI, customSettingsPath?: string) {
   let config: AutoContinueConfig = loadConfig(customSettingsPath);
   const retryManager = new RetryManager();
+  let activeAbortController: AbortController | null = null;
   let lastProcessedMessageTimestamp: number | null = null;
   let lastHttpResponse: { status: number; headers: Record<string, string>; time: number } | null = null;
   let lastExpectedTokenResetTime: number | null = null;
@@ -46,10 +63,120 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
   };
 
   const resetTurnState = () => {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
     retryManager.reset();
     lastProcessedMessageTimestamp = null;
     lastHttpResponse = null;
     lastExpectedTokenResetTime = null;
+    isExecutingContinuation = false;
+  };
+
+  /**
+   * Executes a retry attempt: emits user notification, waits for delayMs with cancellation support,
+   * and dispatches continuation prompt to Pi.
+   */
+  const executeRetry = async (
+    retryResult: RetryCheckResult,
+    ctx: any,
+    errorMessage?: string,
+    expectedResetTime?: number
+  ) => {
+    if (!retryResult.canRetry) {
+      if (retryResult.deadlineExceeded) {
+        if (ctx?.hasUI) {
+          const errorSuffix = errorMessage
+            ? `\nObserved error: "${truncateErrorMessage(errorMessage)}"`
+            : "";
+          notify(
+            ctx,
+            `⏱️ Rate limit retry stopped: maximum retry duration of ${formatDuration(
+              config.rateLimit.maxRetryDurationMs
+            )} exceeded after ${retryResult.attempt} attempt(s).${errorSuffix}`,
+            "error"
+          );
+        }
+      } else if (retryResult.reason) {
+        if (ctx?.hasUI) {
+          notify(ctx, `Rate limit retry stopped: ${retryResult.reason}`, "warning");
+        }
+      }
+      retryManager.reset();
+      return;
+    }
+
+    if (ctx?.hasUI) {
+      let waitMsg = `Waiting ${formatDelay(retryResult.delayMs)} before retry (attempt #${
+        retryResult.attempt
+      }, elapsed: ${formatDuration(retryResult.elapsedMs)} / max: ${formatDuration(
+        config.rateLimit.maxRetryDurationMs
+      )})...`;
+
+      if (errorMessage) {
+        waitMsg =
+          `⚠️ Rate limit / quota error detected: "${truncateErrorMessage(errorMessage)}"\n` +
+          waitMsg;
+      }
+
+      const resetTime = expectedResetTime ?? retryManager.getState().expectedTokenResetTime;
+      if (resetTime) {
+        waitMsg += `\nExpected token reset time: ${formatDateTime(resetTime)}`;
+      }
+
+      notify(ctx, waitMsg, "warning");
+    }
+
+    // Cancel any previous pending wait
+    if (activeAbortController) {
+      activeAbortController.abort();
+    }
+    const abortController = new AbortController();
+    activeAbortController = abortController;
+
+    isExecutingContinuation = true;
+    try {
+      const completed = await cancellableSleep(retryResult.delayMs, abortController.signal);
+      if (!completed || abortController.signal.aborted) {
+        return;
+      }
+
+      if (ctx?.hasUI) {
+        notify(
+          ctx,
+          `🔄 Retrying request (attempt #${retryResult.attempt}, elapsed: ${formatDuration(
+            Date.now() - (retryManager.getState().startTime || Date.now())
+          )})...`,
+          "info"
+        );
+      }
+
+      isSendingOwnRetryPrompt = true;
+      try {
+        pi.sendUserMessage(
+          "The previous request encountered a rate/quota limit. Please continue with your task.",
+          { deliverAs: "followUp", streamingBehavior: "followUp" } as any
+        );
+      } finally {
+        queueMicrotask(() => {
+          isSendingOwnRetryPrompt = false;
+        });
+      }
+    } catch (err) {
+      if (ctx?.hasUI) {
+        notify(
+          ctx,
+          `Failed to send retry prompt: ${err instanceof Error ? err.message : String(err)}`,
+          "error"
+        );
+      }
+    } finally {
+      if (activeAbortController === abortController) {
+        isExecutingContinuation = false;
+        activeAbortController = null;
+      }
+    }
   };
 
   // 1. Session start: reload config and reset all state
@@ -207,82 +334,12 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         classification.retryAfterHeaderReceived
       );
 
-      if (!retryResult.canRetry) {
-        if (retryResult.deadlineExceeded) {
-          if (ctx.hasUI) {
-            notify(
-              ctx,
-              `⏱️ Rate limit retry stopped: maximum retry duration of ${formatDuration(
-                config.rateLimit.maxRetryDurationMs
-              )} exceeded after ${retryResult.attempt} attempt(s).\nObserved error: "${truncateErrorMessage(
-                classification.errorMessage
-              )}"`,
-              "error"
-            );
-          }
-        } else if (retryResult.reason) {
-          if (ctx.hasUI) {
-            notify(ctx, `Rate limit retry stopped: ${retryResult.reason}`, "warning");
-          }
-        }
-        retryManager.reset();
-        return;
-      }
-
-      if (ctx.hasUI) {
-        const errorSummary = truncateErrorMessage(classification.errorMessage);
-        let waitMsg =
-          `⚠️ Rate limit / quota error detected: "${errorSummary}"\n` +
-          `Waiting ${formatDelay(retryResult.delayMs)} before retry (attempt #${
-            retryResult.attempt
-          }, elapsed: ${formatDuration(retryResult.elapsedMs)} / max: ${formatDuration(
-            config.rateLimit.maxRetryDurationMs
-          )})...`;
-
-        if (classification.retryAfterHeaderReceived && classification.expectedResetTime) {
-          waitMsg += `\nExpected token reset time: ${formatDateTime(classification.expectedResetTime)}`;
-        }
-
-        notify(ctx, waitMsg, "warning");
-      }
-
-      // Asynchronously wait for backoff or retry-after delay
-      isExecutingContinuation = true;
-      try {
-        await sleep(retryResult.delayMs);
-
-        if (ctx.hasUI) {
-          notify(
-            ctx,
-            `🔄 Retrying request (attempt #${retryResult.attempt}, elapsed: ${formatDuration(
-              Date.now() - (retryManager.getState().startTime || Date.now())
-            )})...`,
-            "info"
-          );
-        }
-
-        isSendingOwnRetryPrompt = true;
-        try {
-          pi.sendUserMessage(
-            "The previous request encountered a rate/quota limit. Please continue with your task.",
-            { deliverAs: "followUp", streamingBehavior: "followUp" } as any
-          );
-        } finally {
-          queueMicrotask(() => {
-            isSendingOwnRetryPrompt = false;
-          });
-        }
-      } catch (err) {
-        if (ctx.hasUI) {
-          notify(
-            ctx,
-            `Failed to send retry prompt: ${err instanceof Error ? err.message : String(err)}`,
-            "error"
-          );
-        }
-      } finally {
-        isExecutingContinuation = false;
-      }
+      await executeRetry(
+        retryResult,
+        ctx,
+        classification.errorMessage,
+        classification.expectedResetTime
+      );
       return;
     }
 
@@ -321,9 +378,18 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         );
       }
 
+      if (activeAbortController) {
+        activeAbortController.abort();
+      }
+      const abortController = new AbortController();
+      activeAbortController = abortController;
+
       isExecutingContinuation = true;
       try {
-        await sleep(continuationResult.delayMs);
+        const completed = await cancellableSleep(continuationResult.delayMs, abortController.signal);
+        if (!completed || abortController.signal.aborted) {
+          return;
+        }
         isSendingOwnRetryPrompt = true;
         try {
           pi.sendUserMessage(config.tokenLimit.continuePrompt, {
@@ -345,7 +411,10 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         }
         retryManager.decrementAttempt();
       } finally {
-        isExecutingContinuation = false;
+        if (activeAbortController === abortController) {
+          isExecutingContinuation = false;
+          activeAbortController = null;
+        }
       }
       return;
     }
@@ -385,9 +454,18 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         );
       }
 
+      if (activeAbortController) {
+        activeAbortController.abort();
+      }
+      const abortController = new AbortController();
+      activeAbortController = abortController;
+
       isExecutingContinuation = true;
       try {
-        await sleep(continuationResult.delayMs);
+        const completed = await cancellableSleep(continuationResult.delayMs, abortController.signal);
+        if (!completed || abortController.signal.aborted) {
+          return;
+        }
         isSendingOwnRetryPrompt = true;
         try {
           pi.sendUserMessage(config.incompleteToolCall.continuePrompt, {
@@ -409,7 +487,10 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         }
         retryManager.decrementAttempt();
       } finally {
-        isExecutingContinuation = false;
+        if (activeAbortController === abortController) {
+          isExecutingContinuation = false;
+          activeAbortController = null;
+        }
       }
       return;
     }
@@ -475,9 +556,45 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     }
   });
 
-  // 6. Register slash commands: /auto-continue and /auto-resume
+  // 6. Register slash command: /auto-continue
   const commandHandler = async (args: string, ctx: any) => {
-    const subcommand = args.trim().toLowerCase();
+    const trimmedArgs = args.trim();
+    const subcommand = trimmedArgs.toLowerCase();
+
+    // Check for "at <HH:MM>" subcommand
+    if (/^at(\s+.*)?$/i.test(trimmedArgs)) {
+      const timeArg = trimmedArgs.replace(/^at\s*/i, "").trim();
+      if (!timeArg) {
+        if (ctx.hasUI) {
+          notify(
+            ctx,
+            "Please specify a time in HH:MM format (e.g. /auto-continue at 14:30).",
+            "warning"
+          );
+        }
+        return;
+      }
+
+      const parsed = parseTargetTime(timeArg);
+      if (!parsed) {
+        if (ctx.hasUI) {
+          notify(
+            ctx,
+            `Invalid time format "${timeArg}". Please use HH:MM (e.g. /auto-continue at 14:30).`,
+            "warning"
+          );
+        }
+        return;
+      }
+
+      // Ensure auto-continue and rate-limit retries are enabled
+      config.enabled = true;
+      config.rateLimit.enabled = true;
+
+      const retryResult = retryManager.scheduleRetry(config, parsed.targetTimeMs);
+      executeRetry(retryResult, ctx, undefined, parsed.targetTimeMs);
+      return;
+    }
 
     if (subcommand === "status" || subcommand === "") {
       const retryState = retryManager.getState();
@@ -559,18 +676,12 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     }
 
     if (ctx.hasUI) {
-      notify(ctx, "Usage: /auto-continue [status | on | off | reset]", "info");
+      notify(ctx, "Usage: /auto-continue [status | on | off | reset | at <HH:MM>]", "info");
     }
   };
 
   pi.registerCommand("auto-continue", {
     description: "Check auto-continue status or configure settings",
-    handler: commandHandler,
-  });
-
-  // Legacy command alias
-  pi.registerCommand("auto-resume", {
-    description: "Alias for /auto-continue",
     handler: commandHandler,
   });
 }

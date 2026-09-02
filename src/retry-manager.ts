@@ -35,6 +35,7 @@ export class RetryManager {
    * @param now Current timestamp in ms (defaults to Date.now())
    * @param expectedResetTime Optional timestamp (ms) when quota/tokens reset
    * @param retryAfterHeaderReceived Whether an explicit HTTP Retry-After header was received
+   * @param capToMaxDelay Whether to cap the explicit delay to maxDelayMs (default: true)
    */
   public evaluateRetry(
     config: AutoContinueConfig,
@@ -42,7 +43,8 @@ export class RetryManager {
     explicitDelayMs?: number | null,
     now = Date.now(),
     expectedResetTime?: number | null,
-    retryAfterHeaderReceived?: boolean
+    retryAfterHeaderReceived?: boolean,
+    capToMaxDelay = true
   ): RetryCheckResult {
     const rateLimitConfig = config.rateLimit;
 
@@ -84,9 +86,14 @@ export class RetryManager {
     const nextAttempt = this.state.attempt + 1;
     let delayMs: number;
 
-    if (explicitDelayMs !== undefined && explicitDelayMs !== null && explicitDelayMs > 0) {
-      // Respect explicit provider Retry-After header/body hint, capped at maxDelayMs
-      delayMs = Math.min(explicitDelayMs, rateLimitConfig.maxDelayMs);
+    if (explicitDelayMs !== undefined && explicitDelayMs !== null && explicitDelayMs >= 0) {
+      if (capToMaxDelay) {
+        // Respect explicit provider Retry-After header/body hint, capped at maxDelayMs
+        delayMs = Math.min(explicitDelayMs, rateLimitConfig.maxDelayMs);
+      } else {
+        // Explicitly scheduled delay: do not cap at maxDelayMs
+        delayMs = explicitDelayMs;
+      }
     } else {
       // Exponential backoff
       const rawDelay =
@@ -104,7 +111,19 @@ export class RetryManager {
       delayMs = Math.max(rateLimitConfig.baseDelayMs, calculated);
     }
 
-    // Ensure we don't sleep beyond the remaining retry duration
+    if (!capToMaxDelay && delayMs > remainingMs) {
+      return {
+        canRetry: false,
+        attempt: this.state.attempt,
+        delayMs,
+        elapsedMs,
+        remainingMs,
+        deadlineExceeded: true,
+        reason: `Scheduled retry time exceeds maximum retry duration of ${formatDuration(rateLimitConfig.maxRetryDurationMs)}`,
+      };
+    }
+
+    // Ensure we don't sleep beyond the remaining retry duration for standard backoff
     if (delayMs > remainingMs) {
       delayMs = remainingMs;
     }
@@ -131,6 +150,30 @@ export class RetryManager {
       remainingMs,
       deadlineExceeded: false,
     };
+  }
+
+  /**
+   * Schedules a retry at a specific target timestamp.
+   *
+   * @param config The active auto-continue configuration
+   * @param targetTimeMs Epoch timestamp (ms) when retry should execute
+   * @param now Current timestamp in ms (defaults to Date.now())
+   */
+  public scheduleRetry(
+    config: AutoContinueConfig,
+    targetTimeMs: number,
+    now = Date.now()
+  ): RetryCheckResult {
+    const delayMs = Math.max(0, targetTimeMs - now);
+    return this.evaluateRetry(
+      config,
+      `User scheduled retry at ${formatDateTime(targetTimeMs)}`,
+      delayMs,
+      now,
+      targetTimeMs,
+      true,
+      false // do not cap to maxDelayMs
+    );
   }
 
   /**

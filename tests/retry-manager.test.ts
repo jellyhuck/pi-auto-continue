@@ -236,5 +236,76 @@ describe("RetryManager", () => {
     assert.equal(manager.getState().isRetrying, false);
     assert.equal(manager.getState().startTime, null);
   });
+
+  describe("scheduleRetry", () => {
+    it("schedules retry at specific target timestamp without capping to maxDelayMs", () => {
+      const manager = new RetryManager();
+      const config = {
+        ...DEFAULT_CONFIG,
+        rateLimit: {
+          ...DEFAULT_CONFIG.rateLimit,
+          maxDelayMs: 60000, // 1 min max standard delay
+          maxRetryDurationMs: 18000000, // 5 hours max total duration
+        },
+      };
+
+      const now = 1000000;
+      const targetTimeMs = now + 7200000; // 2 hours in future
+
+      const res = manager.scheduleRetry(config, targetTimeMs, now);
+
+      assert.equal(res.canRetry, true);
+      assert.equal(res.attempt, 1);
+      assert.equal(res.delayMs, 7200000); // Preserves 2 hours, not capped at 60s
+      assert.equal(res.deadlineExceeded, false);
+
+      const state = manager.getState();
+      assert.equal(state.isRetrying, true);
+      assert.equal(state.attempt, 1);
+      assert.equal(state.lastDelayMs, 7200000);
+      assert.equal(state.expectedTokenResetTime, targetTimeMs);
+      assert.equal(state.nextRetryTime, targetTimeMs);
+      assert.equal(state.retryAfterHeaderReceived, true);
+    });
+
+    it("enforces maxRetryDurationMs deadline when target time exceeds max duration", () => {
+      const manager = new RetryManager();
+      const config = {
+        ...DEFAULT_CONFIG,
+        rateLimit: {
+          ...DEFAULT_CONFIG.rateLimit,
+          maxRetryDurationMs: 3600000, // 1 hour max total duration
+        },
+      };
+
+      const now = 1000000;
+      const targetTimeMs = now + 7200000; // 2 hours in future (> 1h max)
+
+      const res = manager.scheduleRetry(config, targetTimeMs, now);
+
+      assert.equal(res.canRetry, false);
+      assert.equal(res.deadlineExceeded, true);
+      assert.ok(res.reason?.includes("exceeds maximum retry duration"));
+    });
+
+    it("increments attempt count if retry loop was already active", () => {
+      const manager = new RetryManager();
+      const config = { ...DEFAULT_CONFIG };
+
+      const now = 1000000;
+      // Attempt 1 from error
+      manager.evaluateRetry(config, "HTTP 429", null, now);
+      assert.equal(manager.getState().attempt, 1);
+
+      // User schedules attempt 2 for later
+      const targetTimeMs = now + 300000; // 5m later
+      const res = manager.scheduleRetry(config, targetTimeMs, now + 1000);
+
+      assert.equal(res.canRetry, true);
+      assert.equal(res.attempt, 2);
+      assert.equal(manager.getState().attempt, 2);
+      assert.equal(res.delayMs, 299000);
+    });
+  });
 });
 

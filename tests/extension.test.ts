@@ -86,7 +86,7 @@ describe("pi-auto-continue extension", () => {
     assert.ok(pi.handlers.has("agent_settled"));
 
     assert.ok(pi.commands.has("auto-continue"));
-    assert.ok(pi.commands.has("auto-resume"));
+    assert.equal(pi.commands.has("auto-resume"), false);
   });
 
   it("adds guidance to system prompt in before_agent_start", async () => {
@@ -524,6 +524,118 @@ describe("pi-auto-continue extension", () => {
           n.message.includes("Successfully recovered from rate limit after 2 retry attempt(s)") &&
           n.type === "info"
       )
+    );
+  });
+
+  it("handles /auto-continue at <HH:MM> command and prints retry notice", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const cmd = pi.commands.get("auto-continue");
+    assert.ok(cmd, "auto-continue command should be registered");
+
+    // Target 1 hour in the future
+    const d = new Date(Date.now() + 3600000);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const timeStr = `${hh}:${mm}`;
+
+    await cmd.handler(`at ${timeStr}`, ctx);
+
+    // Should emit retry notice: "Waiting XXs before retry (attempt #1, elapsed: Xs / max: 5h)..."
+    const retryNotif = ctx.notifications.find((n) =>
+      n.message.includes("before retry (attempt #1")
+    );
+    assert.ok(retryNotif, "Retry notification should be emitted");
+    assert.ok(retryNotif.message.includes("Waiting"), "Notification should include 'Waiting'");
+    assert.ok(
+      retryNotif.message.includes("elapsed: 0s / max: 5h"),
+      `Notification should format elapsed and max duration: ${retryNotif.message}`
+    );
+    assert.ok(
+      retryNotif.message.includes("Expected token reset time:"),
+      "Notification should include expected token reset time"
+    );
+    assert.equal(retryNotif.type, "warning");
+
+    // Status command should reflect active retry loop and expected token reset time
+    await cmd.handler("status", ctx);
+    const statusNotif = ctx.notifications.find((n) =>
+      n.message.includes("Auto-Continue Status:")
+    );
+    assert.ok(statusNotif, "Status notification should be emitted");
+    assert.ok(
+      statusNotif.message.includes("Active (attempt #1"),
+      "Status should report active attempt #1"
+    );
+    assert.ok(
+      statusNotif.message.includes("Expected token reset time:"),
+      "Status should report expected reset time"
+    );
+
+    // Clean up timer
+    await cmd.handler("reset", ctx);
+  });
+
+  it("validates arguments for /auto-continue at command", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const cmd = pi.commands.get("auto-continue");
+
+    // Missing time argument
+    await cmd.handler("at", ctx);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("Please specify a time in HH:MM format") && n.type === "warning"
+      )
+    );
+
+    // Invalid time argument
+    await cmd.handler("at 25:99", ctx);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes('Invalid time format "25:99"') && n.type === "warning"
+      )
+    );
+  });
+
+  it("cancels scheduled retry when interactive user input is received", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const cmd = pi.commands.get("auto-continue");
+
+    const d = new Date(Date.now() + 3600000);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+
+    // Schedule retry
+    await cmd.handler(`at ${hh}:${mm}`, ctx);
+
+    // Interactive user input arrives
+    await pi.emit("input", { source: "interactive", text: "cancel task" }, ctx);
+
+    assert.ok(
+      ctx.notifications.some(
+        (n) =>
+          n.message.includes("🛑 User input received: cancelling active retry/continuation loop.") &&
+          n.type === "info"
+      )
+    );
+
+    // Status should be Idle
+    ctx.notifications = [];
+    await cmd.handler("status", ctx);
+    const statusNotif = ctx.notifications.find((n) =>
+      n.message.includes("Auto-Continue Status:")
+    );
+    assert.ok(
+      statusNotif?.message.includes("Current retry status: Idle"),
+      "Retry state should be reset to Idle"
     );
   });
 });

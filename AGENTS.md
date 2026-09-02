@@ -173,8 +173,7 @@ Extracts delays from:
      - `error`: Deadline exceeded, non-retryable billing errors, critical failures.
 
 4. **Backward Compatibility**:
-   - Maintain alias support for `/auto-resume` alongside `/auto-continue`.
-   - Maintain fallback parsing for legacy `autoResume` configuration properties.
+   - Maintain fallback parsing for legacy `autoResume` configuration properties in settings.json.
 
 5. **Testing Strategy**:
    - Test files live in `tests/` and end in `.test.ts`.
@@ -186,7 +185,7 @@ Extracts delays from:
 ## 8. Agent Checklist Before Submitting Code Changes
 
 - [ ] All TypeScript types compile without errors (`npm run typecheck`).
-- [ ] All 65+ unit and integration tests pass (`npm test`).
+- [ ] All 75+ unit and integration tests pass (`npm test`).
 - [ ] Any new regex patterns are covered by test cases in `tests/classifier.test.ts`.
 - [ ] New configuration options have defaults declared in `src/constants.ts` and types in `src/types.ts`.
 - [ ] README.md is updated if command signatures or configuration options change.

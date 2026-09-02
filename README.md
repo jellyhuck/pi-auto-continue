@@ -15,7 +15,7 @@ An extension for the [Pi Coding Agent](https://github.com/earendil-works/pi) (`@
 - **Informative UI Notifications**: Clear, real-time status notices displaying calculated delays, elapsed time, observed provider errors, retry attempt counts, and remaining duration.
 - **Header & Error Hint Parsing**: Automatically honors `Retry-After` headers and extracts inline delay hints from error messages (e.g. `try again in 25s`).
 - **Exponential Backoff with Jitter**: Smooth backoff progression with random jitter to prevent thundering herd retries.
-- **Slash Commands**: Interactive `/auto-continue` (and `/auto-resume`) command with `status`, `on`, `off`, and `reset` subcommands.
+- **Slash Commands**: Interactive `/auto-continue` command with `status`, `on`, `off`, `reset`, and `at <HH:MM>` subcommands.
 
 ---
 
@@ -105,11 +105,10 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
 | Command | Description |
 | :--- | :--- |
 | `/auto-continue status` | Display current active status, retry state, elapsed time, and configuration. |
+| `/auto-continue at <HH:MM>` | Schedule a retry at the specified local time (e.g. `/auto-continue at 14:30`). |
 | `/auto-continue on` | Enable auto-continue in the current session. |
 | `/auto-continue off` | Disable auto-continue in the current session. |
 | `/auto-continue reset` | Reset retry counters and reload settings from disk. |
-
-*(Note: `/auto-resume` is also supported as an alias)*
 
 ---
 
