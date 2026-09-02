@@ -84,13 +84,6 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
     DEFAULT_CONFIG.rateLimit.maxDelayMs
   );
 
-  const maxContinuations =
-    typeof tokenLimitRaw.maxContinuations === "number"
-      ? tokenLimitRaw.maxContinuations
-      : typeof rawConfig.maxResumes === "number"
-        ? rawConfig.maxResumes
-        : DEFAULT_CONFIG.tokenLimit.maxContinuations;
-
   const tokenMaxRetryDurationMs = parseDuration(
     tokenLimitRaw.maxRetryDurationMs,
     DEFAULT_CONFIG.tokenLimit.maxRetryDurationMs
@@ -126,7 +119,6 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
     },
     tokenLimit: {
       enabled: tokenLimitRaw.enabled !== false,
-      maxContinuations: Math.max(1, maxContinuations),
       maxRetryDurationMs: tokenMaxRetryDurationMs,
       baseDelayMs: tokenBaseDelayMs,
       maxDelayMs: tokenMaxDelayMs,

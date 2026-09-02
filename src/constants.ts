@@ -12,17 +12,16 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
     enabled: true,
     maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
     baseDelayMs: 5000, // 5 seconds
-    maxDelayMs: 60000, // 1 minute
+    maxDelayMs: 300000, // 5 minutes
     backoffMultiplier: 2,
     jitter: true,
   },
   tokenLimit: {
     enabled: true,
-    maxContinuations: 5,
     maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
     baseDelayMs: 5000, // 5 seconds
-    maxDelayMs: 60000, // 1 minute
-    backoffMultiplier: 2,
+    maxDelayMs: 600000, // 10 minutes
+    backoffMultiplier: 6,
     continuePrompt:
       "Continue from where you left off. Do not repeat what you've already written. Pick up exactly where the previous response was cut off.",
   },

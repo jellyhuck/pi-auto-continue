@@ -267,16 +267,6 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         return;
       }
 
-      if (continuationCount >= config.tokenLimit.maxContinuations) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `[auto-continue] Token limit cutoff: maximum continuations (${config.tokenLimit.maxContinuations}) reached for this turn. Stopping.`,
-            "warning"
-          );
-        }
-        return;
-      }
-
       const rawDelay =
         config.tokenLimit.baseDelayMs *
         Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
@@ -290,7 +280,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `[auto-continue] ✂️ Response truncated (max tokens reached). Continuing (${continuationCount}/${config.tokenLimit.maxContinuations}, delay: ${formatDelay(
+          `[auto-continue] ✂️ Response truncated (max tokens reached). Continuing (attempt #${continuationCount}, delay: ${formatDelay(
             delayMs
           )})...`,
           "info"
@@ -349,16 +339,6 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         return;
       }
 
-      if (continuationCount >= config.tokenLimit.maxContinuations) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `[auto-continue] Incomplete tool call: maximum continuations (${config.tokenLimit.maxContinuations}) reached. Stopping.`,
-            "warning"
-          );
-        }
-        return;
-      }
-
       const rawDelay =
         config.tokenLimit.baseDelayMs *
         Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
@@ -372,7 +352,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
       if (ctx.hasUI) {
         ctx.ui.notify(
-          `[auto-continue] ⚙️ Output cut off mid-tool-call. Requesting continuation (${continuationCount}/${config.tokenLimit.maxContinuations}, delay: ${formatDelay(
+          `[auto-continue] ⚙️ Output cut off mid-tool-call. Requesting continuation (attempt #${continuationCount}, delay: ${formatDelay(
             delayMs
           )})...`,
           "info"
@@ -478,7 +458,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         `  Max retry duration: ${formatDuration(config.rateLimit.maxRetryDurationMs)} (${config.rateLimit.maxRetryDurationMs} ms)\n` +
         `  Base delay / Max delay: ${formatDelay(config.rateLimit.baseDelayMs)} / ${formatDelay(config.rateLimit.maxDelayMs)}\n` +
         `  Current retry status: ${retryInfo}\n` +
-        `  Token limit continuations: ${continuationCount}/${config.tokenLimit.maxContinuations} (enabled: ${config.tokenLimit.enabled ? "yes" : "no"})\n` +
+        `  Token limit continuations: ${continuationCount} (enabled: ${config.tokenLimit.enabled ? "yes" : "no"})\n` +
         `  Token limit base / max delay: ${formatDelay(config.tokenLimit.baseDelayMs)} / ${formatDelay(config.tokenLimit.maxDelayMs)}\n` +
         `  Incomplete tool call handling: ${config.incompleteToolCall.enabled ? "enabled" : "disabled"}`;
 

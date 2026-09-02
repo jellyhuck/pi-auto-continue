@@ -23,8 +23,6 @@ export interface RateLimitConfig {
 export interface TokenLimitConfig {
   /** Whether to automatically continue truncated responses (default: true) */
   enabled: boolean;
-  /** Maximum consecutive continuations for token limit cutoffs in a single user turn (default: 5) */
-  maxContinuations: number;
   /**
    * Maximum total duration in milliseconds to keep continuing after the first token limit truncation.
    * Continuations stop once this duration has elapsed (default: 18,000,000 ms = 5 hours).

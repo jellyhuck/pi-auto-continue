@@ -51,7 +51,6 @@ describe("config", () => {
             jitter: false,
           },
           tokenLimit: {
-            maxContinuations: 8,
             maxRetryDurationMs: "1h",
             baseDelayMs: "2s",
             maxDelayMs: "30s",
@@ -70,7 +69,6 @@ describe("config", () => {
         assert.equal(config.rateLimit.baseDelayMs, 10000);
         assert.equal(config.rateLimit.maxDelayMs, 300000);
         assert.equal(config.rateLimit.jitter, false);
-        assert.equal(config.tokenLimit.maxContinuations, 8);
         assert.equal(config.tokenLimit.maxRetryDurationMs, 3600000);
         assert.equal(config.tokenLimit.baseDelayMs, 2000);
         assert.equal(config.tokenLimit.maxDelayMs, 30000);
@@ -81,14 +79,13 @@ describe("config", () => {
       }
     });
 
-    it("supports legacy autoResume section and maxResumes fallback", () => {
+    it("supports legacy autoResume section and fallback", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-config-legacy-"));
       const tmpFile = path.join(tmpDir, "settings.json");
 
       const settings = {
         autoResume: {
           enabled: true,
-          maxResumes: 4,
           delayMs: 1500,
           continuePrompt: "Continue where left off.",
           rateLimit: {
@@ -105,7 +102,7 @@ describe("config", () => {
       try {
         const config = loadConfig(tmpFile);
         assert.equal(config.enabled, true);
-        assert.equal(config.tokenLimit.maxContinuations, 4);
+        assert.equal(config.tokenLimit.continuePrompt, "Continue where left off.");
         assert.equal(config.tokenLimit.baseDelayMs, DEFAULT_CONFIG.tokenLimit.baseDelayMs);
         assert.equal(config.rateLimit.enabled, true);
         assert.ok(config.rateLimit.maxRetryDurationMs >= DEFAULT_MAX_RETRY_DURATION_MS);

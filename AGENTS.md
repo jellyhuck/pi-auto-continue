@@ -105,10 +105,10 @@ pi-auto-continue/
          │                               │     evaluateRetry() -> sleep(delayMs) -> sendUserMessage(retryPrompt)
          │                               │
          │                               ├─► TOKEN_LIMIT (stopReason: "length"):
-         │                               │     check maxContinuations -> sleep(delayMs) -> sendUserMessage(continuePrompt)
+         │                               │     check maxRetryDurationMs -> sleep(delayMs) -> sendUserMessage(continuePrompt)
          │                               │
          │                               ├─► INCOMPLETE_TOOL_CALL:
-         │                               │     check maxContinuations -> sleep(delayMs) -> sendUserMessage(toolPrompt)
+         │                               │     check maxRetryDurationMs -> sleep(delayMs) -> sendUserMessage(toolPrompt)
          │                               │
          │                               ├─► CONTEXT_OVERFLOW:
          │                               │     notify user -> defer to Pi auto-compaction
@@ -168,12 +168,12 @@ Extracts delays from:
    - Never let an unhandled rejection escape an event listener. Wrap asynchronous handlers in `try/catch` and notify via `ctx.ui.notify` when UI is available (`ctx.hasUI`).
    - UI notifications must be polite and informative:
      - `info`: Successful recovery, standard continuations, status commands.
-     - `warning`: Rate limit detected, retry waiting notice, continuation caps reached.
+     - `warning`: Rate limit detected, retry waiting notice.
      - `error`: Deadline exceeded, non-retryable billing errors, critical failures.
 
 4. **Backward Compatibility**:
    - Maintain alias support for `/auto-resume` alongside `/auto-continue`.
-   - Maintain fallback parsing for legacy `autoResume` and `maxResumes` configuration properties.
+   - Maintain fallback parsing for legacy `autoResume` configuration properties.
 
 5. **Testing Strategy**:
    - Test files live in `tests/` and end in `.test.ts`.

@@ -64,7 +64,6 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
     },
     "tokenLimit": {
       "enabled": true,
-      "maxContinuations": 5,
       "maxRetryDurationMs": "5h",
       "baseDelayMs": "5s",
       "maxDelayMs": "1m",
@@ -91,7 +90,6 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
 | `rateLimit.backoffMultiplier` | `number` | `2` | Multiplier for exponential backoff. |
 | `rateLimit.jitter` | `boolean` | `true` | Adds ±15% random variation to delays to avoid synchronized retries. |
 | `tokenLimit.enabled` | `boolean` | `true` | Whether to continue responses truncated by max output tokens. |
-| `tokenLimit.maxContinuations` | `number` | `5` | Maximum consecutive continuations in a single turn. |
 | `tokenLimit.maxRetryDurationMs` | `number \| string` | `18000000` (`"5h"`) | Maximum total duration to keep continuing truncated responses before giving up. |
 | `tokenLimit.baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Starting delay for exponential backoff on token limit continuations. |
 | `tokenLimit.maxDelayMs` | `number \| string` | `60000` (`"1m"`) | Maximum delay cap for a single token limit continuation attempt. |
