@@ -160,4 +160,81 @@ describe("RetryManager", () => {
     const summaryWithReset = manager.getStatusSummary(DEFAULT_CONFIG, 1010000);
     assert.ok(summaryWithReset.includes("Expected token reset time:"));
   });
+
+  it("evaluates continuation and advances attempts on shared retryState", () => {
+    const manager = new RetryManager();
+    const config = {
+      ...DEFAULT_CONFIG,
+      tokenLimit: {
+        ...DEFAULT_CONFIG.tokenLimit,
+        baseDelayMs: 3000,
+        backoffMultiplier: 2,
+      },
+    };
+
+    const startTime = 1000000;
+    const res1 = manager.evaluateContinuation(config, "TOKEN_LIMIT", "Truncated", startTime);
+    assert.equal(res1.canRetry, true);
+    assert.equal(res1.attempt, 1);
+    assert.equal(res1.delayMs, 3000);
+    assert.equal(manager.getState().attempt, 1);
+    assert.equal(manager.getState().lastInterruptionType, "TOKEN_LIMIT");
+
+    // Second continuation
+    const res2 = manager.evaluateContinuation(config, "TOKEN_LIMIT", "Truncated again", startTime + 4000);
+    assert.equal(res2.canRetry, true);
+    assert.equal(res2.attempt, 2);
+    assert.equal(res2.delayMs, 6000); // 3000 * 2^1
+    assert.equal(manager.getState().attempt, 2);
+  });
+
+  it("consolidates rate limit retry and token continuation under the same attempt counter", () => {
+    const manager = new RetryManager();
+    const config = {
+      ...DEFAULT_CONFIG,
+      rateLimit: {
+        ...DEFAULT_CONFIG.rateLimit,
+        baseDelayMs: 2000,
+        jitter: false,
+      },
+      tokenLimit: {
+        ...DEFAULT_CONFIG.tokenLimit,
+        baseDelayMs: 1000,
+        backoffMultiplier: 2,
+      },
+    };
+
+    const startTime = 1000000;
+    // Attempt 1: Token truncation
+    const res1 = manager.evaluateContinuation(config, "TOKEN_LIMIT", "Length cutoff", startTime);
+    assert.equal(res1.attempt, 1);
+    assert.equal(manager.getState().attempt, 1);
+
+    // Attempt 2: Provider hits rate limit during continuation
+    const res2 = manager.evaluateRetry(config, "HTTP 429", null, startTime + 2000);
+    assert.equal(res2.attempt, 2);
+    assert.equal(manager.getState().attempt, 2);
+    assert.equal(manager.getState().lastInterruptionType, "RATE_LIMIT");
+
+    // Attempt 3: Another token truncation after recovering from rate limit
+    const res3 = manager.evaluateContinuation(config, "TOKEN_LIMIT", "Length cutoff 2", startTime + 8000);
+    assert.equal(res3.attempt, 3);
+    assert.equal(manager.getState().attempt, 3);
+    assert.equal(manager.getState().lastInterruptionType, "TOKEN_LIMIT");
+  });
+
+  it("decrements attempt count and resets retrying state when reaching 0", () => {
+    const manager = new RetryManager();
+    const config = { ...DEFAULT_CONFIG };
+
+    manager.evaluateContinuation(config, "TOKEN_LIMIT", "Truncated", 1000000);
+    assert.equal(manager.getState().attempt, 1);
+    assert.equal(manager.getState().isRetrying, true);
+
+    manager.decrementAttempt();
+    assert.equal(manager.getState().attempt, 0);
+    assert.equal(manager.getState().isRetrying, false);
+    assert.equal(manager.getState().startTime, null);
+  });
 });
+

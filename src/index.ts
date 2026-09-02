@@ -21,8 +21,6 @@ function sleep(ms: number): Promise<void> {
 export default function (pi: ExtensionAPI, customSettingsPath?: string) {
   let config: AutoContinueConfig = loadConfig(customSettingsPath);
   const retryManager = new RetryManager();
-  let continuationCount = 0;
-  let continuationStartTime: number | null = null;
   let lastProcessedMessageTimestamp: number | null = null;
   let lastHttpResponse: { status: number; headers: Record<string, string>; time: number } | null = null;
   let lastExpectedTokenResetTime: number | null = null;
@@ -48,8 +46,7 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
   };
 
   const resetTurnState = () => {
-    continuationCount = 0;
-    continuationStartTime = null;
+    retryManager.reset();
     lastProcessedMessageTimestamp = null;
     lastHttpResponse = null;
     lastExpectedTokenResetTime = null;
@@ -58,7 +55,6 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
   // 1. Session start: reload config and reset all state
   pi.on("session_start", async (_event, _ctx) => {
     config = loadConfig(customSettingsPath);
-    retryManager.reset();
     resetTurnState();
     isExecutingContinuation = false;
     isSendingOwnRetryPrompt = false;
@@ -135,11 +131,10 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
     return { action: "continue" };
   });
 
-  // 3. Reset turn-level continuation counter on fresh user input
+  // 3. Reset turn-level retry/continuation state on fresh user input
   pi.on("before_agent_start", async (event, _ctx) => {
     if (!isExecutingContinuation) {
-      continuationCount = 0;
-      continuationStartTime = null;
+      retryManager.reset();
       lastProcessedMessageTimestamp = null;
     }
 
@@ -295,43 +290,32 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     // CASE 2: Token Limit Truncation (max_tokens / stopReason: "length")
     // =========================================================================
     if (classification.type === "TOKEN_LIMIT") {
-      if (!config.tokenLimit.enabled) return;
+      const continuationResult = retryManager.evaluateContinuation(
+        config,
+        "TOKEN_LIMIT",
+        "Token limit reached (stopReason: length)"
+      );
 
-      const now = Date.now();
-      if (continuationStartTime === null) {
-        continuationStartTime = now;
-      }
-      const elapsedMs = now - continuationStartTime;
-
-      if (elapsedMs >= config.tokenLimit.maxRetryDurationMs) {
-        if (ctx.hasUI) {
-          notify(
-            ctx,
-            `⏱️ Token limit continuation stopped: maximum duration of ${formatDuration(
-              config.tokenLimit.maxRetryDurationMs
-            )} exceeded after ${continuationCount} continuation(s).`,
-            "error"
-          );
+      if (!continuationResult.canRetry) {
+        if (continuationResult.deadlineExceeded) {
+          if (ctx.hasUI) {
+            notify(
+              ctx,
+              `⏱️ Token limit continuation stopped: maximum duration of ${formatDuration(
+                config.tokenLimit.maxRetryDurationMs
+              )} exceeded after ${continuationResult.attempt} attempt(s).`,
+              "error"
+            );
+          }
         }
         return;
       }
 
-      const rawDelay =
-        config.tokenLimit.baseDelayMs *
-        Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
-      let delayMs = Math.min(rawDelay, config.tokenLimit.maxDelayMs);
-      const remainingMs = Math.max(0, config.tokenLimit.maxRetryDurationMs - elapsedMs);
-      if (delayMs > remainingMs) {
-        delayMs = remainingMs;
-      }
-
-      continuationCount++;
-
       if (ctx.hasUI) {
         notify(
           ctx,
-          `✂️ Response truncated (max tokens reached). Continuing (attempt #${continuationCount}, delay: ${formatDelay(
-            delayMs
+          `✂️ Response truncated (max tokens reached). Continuing (attempt #${continuationResult.attempt}, delay: ${formatDelay(
+            continuationResult.delayMs
           )})...`,
           "info"
         );
@@ -339,7 +323,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
       isExecutingContinuation = true;
       try {
-        await sleep(delayMs);
+        await sleep(continuationResult.delayMs);
         isSendingOwnRetryPrompt = true;
         try {
           pi.sendUserMessage(config.tokenLimit.continuePrompt, {
@@ -359,7 +343,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
             "error"
           );
         }
-        continuationCount--;
+        retryManager.decrementAttempt();
       } finally {
         isExecutingContinuation = false;
       }
@@ -370,43 +354,32 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     // CASE 3: Incomplete Tool Call (Cut off mid-arguments)
     // =========================================================================
     if (classification.type === "INCOMPLETE_TOOL_CALL") {
-      if (!config.incompleteToolCall.enabled) return;
+      const continuationResult = retryManager.evaluateContinuation(
+        config,
+        "INCOMPLETE_TOOL_CALL",
+        "Incomplete tool call (output truncated)"
+      );
 
-      const now = Date.now();
-      if (continuationStartTime === null) {
-        continuationStartTime = now;
-      }
-      const elapsedMs = now - continuationStartTime;
-
-      if (elapsedMs >= config.tokenLimit.maxRetryDurationMs) {
-        if (ctx.hasUI) {
-          notify(
-            ctx,
-            `⏱️ Incomplete tool call continuation stopped: maximum duration of ${formatDuration(
-              config.tokenLimit.maxRetryDurationMs
-            )} exceeded.`,
-            "error"
-          );
+      if (!continuationResult.canRetry) {
+        if (continuationResult.deadlineExceeded) {
+          if (ctx.hasUI) {
+            notify(
+              ctx,
+              `⏱️ Incomplete tool call continuation stopped: maximum duration of ${formatDuration(
+                config.tokenLimit.maxRetryDurationMs
+              )} exceeded after ${continuationResult.attempt} attempt(s).`,
+              "error"
+            );
+          }
         }
         return;
       }
 
-      const rawDelay =
-        config.tokenLimit.baseDelayMs *
-        Math.pow(config.tokenLimit.backoffMultiplier, Math.max(0, continuationCount));
-      let delayMs = Math.min(rawDelay, config.tokenLimit.maxDelayMs);
-      const remainingMs = Math.max(0, config.tokenLimit.maxRetryDurationMs - elapsedMs);
-      if (delayMs > remainingMs) {
-        delayMs = remainingMs;
-      }
-
-      continuationCount++;
-
       if (ctx.hasUI) {
         notify(
           ctx,
-          `⚙️ Output cut off mid-tool-call. Requesting continuation (attempt #${continuationCount}, delay: ${formatDelay(
-            delayMs
+          `⚙️ Output cut off mid-tool-call. Requesting continuation (attempt #${continuationResult.attempt}, delay: ${formatDelay(
+            continuationResult.delayMs
           )})...`,
           "info"
         );
@@ -414,7 +387,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
       isExecutingContinuation = true;
       try {
-        await sleep(delayMs);
+        await sleep(continuationResult.delayMs);
         isSendingOwnRetryPrompt = true;
         try {
           pi.sendUserMessage(config.incompleteToolCall.continuePrompt, {
@@ -434,7 +407,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
             "error"
           );
         }
-        continuationCount--;
+        retryManager.decrementAttempt();
       } finally {
         isExecutingContinuation = false;
       }
@@ -480,19 +453,25 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     if (retryState.isRetrying && retryState.attempt > 0) {
       const totalElapsed = retryState.startTime ? Date.now() - retryState.startTime : 0;
       if (ctx.hasUI) {
-        notify(
-          ctx,
-          `✅ Successfully recovered from rate limit after ${
-            retryState.attempt
-          } retry attempt(s) (total time: ${formatDuration(totalElapsed)}).`,
-          "info"
-        );
+        if (retryState.lastInterruptionType === "RATE_LIMIT") {
+          notify(
+            ctx,
+            `✅ Successfully recovered from rate limit after ${
+              retryState.attempt
+            } retry attempt(s) (total time: ${formatDuration(totalElapsed)}).`,
+            "info"
+          );
+        } else {
+          notify(
+            ctx,
+            `✅ Successfully completed response after ${
+              retryState.attempt
+            } continuation attempt(s) (total time: ${formatDuration(totalElapsed)}).`,
+            "info"
+          );
+        }
       }
       retryManager.reset();
-    }
-
-    if (continuationCount > 0 && !isExecutingContinuation) {
-      continuationCount = 0;
     }
   });
 
@@ -531,7 +510,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
 
       const tokenLimitLines = [
         `  Token Limit Settings & Status:`,
-        `    Continuations: ${config.tokenLimit.enabled ? "enabled" : "disabled"} (${continuationCount} in current turn)`,
+        `    Continuations: ${config.tokenLimit.enabled ? "enabled" : "disabled"} (${retryState.attempt} attempt(s) in current turn)`,
         `    Max retry duration: ${formatDuration(config.tokenLimit.maxRetryDurationMs)} (${config.tokenLimit.maxRetryDurationMs} ms)`,
         `    Base delay / Max delay: ${formatDelay(config.tokenLimit.baseDelayMs)} / ${formatDelay(config.tokenLimit.maxDelayMs)}`,
         `    Backoff multiplier: ${config.tokenLimit.backoffMultiplier}x`,

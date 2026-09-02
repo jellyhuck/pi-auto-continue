@@ -102,13 +102,13 @@ pi-auto-continue/
          ├─── message_end ──────────► classifyInterruption(message, lastHttpResponse)
          │                               │
          │                               ├─► RATE_LIMIT:
-         │                               │     evaluateRetry() -> sleep(delayMs) -> sendUserMessage(retryPrompt)
+         │                               │     retryManager.evaluateRetry() -> sleep(delayMs) -> sendUserMessage(retryPrompt)
          │                               │
          │                               ├─► TOKEN_LIMIT (stopReason: "length"):
-         │                               │     check maxRetryDurationMs -> sleep(delayMs) -> sendUserMessage(continuePrompt)
+         │                               │     retryManager.evaluateContinuation() -> sleep(delayMs) -> sendUserMessage(continuePrompt)
          │                               │
          │                               ├─► INCOMPLETE_TOOL_CALL:
-         │                               │     check maxRetryDurationMs -> sleep(delayMs) -> sendUserMessage(toolPrompt)
+         │                               │     retryManager.evaluateContinuation() -> sleep(delayMs) -> sendUserMessage(toolPrompt)
          │                               │
          │                               ├─► CONTEXT_OVERFLOW:
          │                               │     notify user -> defer to Pi auto-compaction
@@ -142,8 +142,9 @@ Extracts delays from:
 - Inline error text patterns (e.g., `try again in 25s`, `retry after 1.5m`, `resets at 2026-09-01T14:30:00Z`).
 
 ### 3. Retry Manager (`src/retry-manager.ts`)
+- **Consolidated `RetryState`**: Manages a single unified retry state tracking `attempt`, elapsed duration, backoff delay, and last interruption type across both rate limit retries and token continuations.
 - **Exponential Backoff Formula**: $\text{rawDelay} = \text{baseDelayMs} \times (\text{backoffMultiplier})^{\text{attempt} - 1}$
-- **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) to prevent synchronized retry stampedes.
+- **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) on rate limits to prevent synchronized retry stampedes.
 - **Clamping**: $\text{delayMs} = \min(\text{maxDelayMs}, \max(\text{baseDelayMs}, \text{calculatedDelay}))$.
 - **Deadline Enforcement**: If $\text{elapsedMs} \ge \text{maxRetryDurationMs}$, aborts retry and emits an error notice.
 
@@ -185,7 +186,7 @@ Extracts delays from:
 ## 8. Agent Checklist Before Submitting Code Changes
 
 - [ ] All TypeScript types compile without errors (`npm run typecheck`).
-- [ ] All 47+ unit and integration tests pass (`npm test`).
+- [ ] All 65+ unit and integration tests pass (`npm test`).
 - [ ] Any new regex patterns are covered by test cases in `tests/classifier.test.ts`.
 - [ ] New configuration options have defaults declared in `src/constants.ts` and types in `src/types.ts`.
 - [ ] README.md is updated if command signatures or configuration options change.

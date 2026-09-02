@@ -21,6 +21,7 @@ export class RetryManager {
     attempt: 0,
     lastDelayMs: 0,
     lastErrorMessage: undefined,
+    lastInterruptionType: undefined,
     retryAfterHeaderReceived: false,
     expectedTokenResetTime: undefined,
   };
@@ -112,6 +113,7 @@ export class RetryManager {
     this.state.attempt = nextAttempt;
     this.state.lastDelayMs = delayMs;
     this.state.lastErrorMessage = errorMessage;
+    this.state.lastInterruptionType = "RATE_LIMIT";
     this.state.nextRetryTime = now + delayMs;
     this.state.retryAfterHeaderReceived = Boolean(retryAfterHeaderReceived);
     this.state.expectedTokenResetTime =
@@ -132,6 +134,113 @@ export class RetryManager {
   }
 
   /**
+   * Evaluates whether an auto-continuation should be scheduled for token truncation or incomplete tool calls.
+   * Advances the attempt counter on the single consolidated RetryState and enforces duration deadlines.
+   *
+   * @param config The active auto-continue configuration
+   * @param type Interruption type ("TOKEN_LIMIT" | "INCOMPLETE_TOOL_CALL")
+   * @param reason Optional human-readable reason
+   * @param now Current timestamp in ms (defaults to Date.now())
+   */
+  public evaluateContinuation(
+    config: AutoContinueConfig,
+    type: "TOKEN_LIMIT" | "INCOMPLETE_TOOL_CALL" = "TOKEN_LIMIT",
+    reason?: string,
+    now = Date.now()
+  ): RetryCheckResult {
+    const isTokenLimit = type === "TOKEN_LIMIT";
+    const isEnabled = isTokenLimit
+      ? config.tokenLimit.enabled
+      : config.incompleteToolCall.enabled;
+
+    if (!config.enabled || !isEnabled) {
+      return {
+        canRetry: false,
+        attempt: this.state.attempt,
+        delayMs: 0,
+        elapsedMs: 0,
+        remainingMs: 0,
+        deadlineExceeded: false,
+        reason: `${isTokenLimit ? "Token limit" : "Incomplete tool call"} continuations are disabled by configuration`,
+      };
+    }
+
+    const tokenConfig = config.tokenLimit;
+
+    // Initialize start time if this is the start of a retry/continuation cycle
+    if (!this.state.isRetrying || this.state.startTime === null) {
+      this.state.isRetrying = true;
+      this.state.startTime = now;
+      this.state.attempt = 0;
+    }
+
+    const elapsedMs = now - this.state.startTime;
+    const remainingMs = Math.max(0, tokenConfig.maxRetryDurationMs - elapsedMs);
+
+    // Check if maxRetryDurationMs deadline has already passed
+    if (elapsedMs >= tokenConfig.maxRetryDurationMs) {
+      return {
+        canRetry: false,
+        attempt: this.state.attempt,
+        delayMs: 0,
+        elapsedMs,
+        remainingMs: 0,
+        deadlineExceeded: true,
+        reason: `Maximum retry duration of ${formatDuration(tokenConfig.maxRetryDurationMs)} exceeded`,
+      };
+    }
+
+    const nextAttempt = this.state.attempt + 1;
+    const rawDelay =
+      tokenConfig.baseDelayMs *
+      Math.pow(tokenConfig.backoffMultiplier, Math.max(0, nextAttempt - 1));
+
+    let delayMs = Math.min(rawDelay, tokenConfig.maxDelayMs);
+
+    // Ensure we don't sleep beyond the remaining retry duration
+    if (delayMs > remainingMs) {
+      delayMs = remainingMs;
+    }
+
+    const message =
+      reason ||
+      (isTokenLimit
+        ? "Response truncated (max tokens reached)"
+        : "Output cut off mid-tool-call");
+
+    // Update consolidated state
+    this.state.attempt = nextAttempt;
+    this.state.lastDelayMs = delayMs;
+    this.state.lastErrorMessage = message;
+    this.state.lastInterruptionType = type;
+    this.state.nextRetryTime = now + delayMs;
+    this.state.retryAfterHeaderReceived = false;
+    this.state.expectedTokenResetTime = undefined;
+
+    return {
+      canRetry: true,
+      attempt: nextAttempt,
+      delayMs,
+      elapsedMs,
+      remainingMs,
+      deadlineExceeded: false,
+    };
+  }
+
+  /**
+   * Decrements attempt count if a retry or continuation prompt failed to send.
+   */
+  public decrementAttempt(): void {
+    if (this.state.attempt > 0) {
+      this.state.attempt--;
+    }
+    if (this.state.attempt === 0) {
+      this.state.isRetrying = false;
+      this.state.startTime = null;
+    }
+  }
+
+  /**
    * Resets retry state on successful completion or new session.
    */
   public reset(): void {
@@ -141,6 +250,7 @@ export class RetryManager {
       attempt: 0,
       lastDelayMs: 0,
       lastErrorMessage: undefined,
+      lastInterruptionType: undefined,
       nextRetryTime: undefined,
       retryAfterHeaderReceived: false,
       expectedTokenResetTime: undefined,
@@ -163,12 +273,17 @@ export class RetryManager {
     }
 
     const elapsed = now - this.state.startTime;
-    const remaining = Math.max(0, config.rateLimit.maxRetryDurationMs - elapsed);
+    const maxDuration =
+      this.state.lastInterruptionType === "TOKEN_LIMIT" ||
+      this.state.lastInterruptionType === "INCOMPLETE_TOOL_CALL"
+        ? config.tokenLimit.maxRetryDurationMs
+        : config.rateLimit.maxRetryDurationMs;
+    const remaining = Math.max(0, maxDuration - elapsed);
 
     let summary =
       `Active Retry Loop:\n` +
       `  Attempt: ${this.state.attempt}\n` +
-      `  Elapsed: ${formatDuration(elapsed)} / Max: ${formatDuration(config.rateLimit.maxRetryDurationMs)}\n` +
+      `  Elapsed: ${formatDuration(elapsed)} / Max: ${formatDuration(maxDuration)}\n` +
       `  Remaining: ${formatDuration(remaining)}\n` +
       `  Last delay: ${formatDelay(this.state.lastDelayMs)}\n` +
       `  Last error: ${this.state.lastErrorMessage || "None"}`;
@@ -180,3 +295,4 @@ export class RetryManager {
     return summary;
   }
 }
+

@@ -86,14 +86,20 @@ export interface RetryState {
   attempt: number;
   lastDelayMs: number;
   lastErrorMessage?: string;
+  lastInterruptionType?: InterruptionType;
   nextRetryTime?: number;
   /** Whether the active or last retry was triggered by a Retry-After header */
   retryAfterHeaderReceived?: boolean;
   /** Expected epoch timestamp (ms) when tokens/quota reset from Retry-After header */
   expectedTokenResetTime?: number;
-}
-
-export interface ContinuationState {
-  count: number;
+  /** Optional alias for attempt retained for backward compatibility */
+  count?: number;
+  /** Optional timestamp of last processed message */
   lastMessageTimestamp?: number;
 }
+
+/**
+ * Consolidated into RetryState.
+ * Retained as an alias for backward compatibility.
+ */
+export type ContinuationState = RetryState;

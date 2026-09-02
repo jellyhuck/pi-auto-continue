@@ -410,4 +410,121 @@ describe("pi-auto-continue extension", () => {
       `Expected date format YYYY-MM-DD HH:MM:SS in status: ${statusNotif.message}`
     );
   });
+
+  it("handles consecutive token continuations and notifies completion on settle", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+
+    // Continuation 1: attempt #1
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "length",
+          content: [{ type: "text", text: "Part 1..." }],
+          timestamp: 10000,
+        },
+      },
+      ctx
+    );
+
+    assert.equal(pi.sentUserMessages.length, 1);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("attempt #1") && n.message.includes("Response truncated")
+      )
+    );
+
+    // Continuation 2: attempt #2
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "length",
+          content: [{ type: "text", text: "Part 2..." }],
+          timestamp: 10001,
+        },
+      },
+      ctx
+    );
+
+    assert.equal(pi.sentUserMessages.length, 2);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("attempt #2") && n.message.includes("Response truncated")
+      )
+    );
+
+    // Settle -> completion notice with attempt count 2
+    await pi.emit("agent_settled", {}, ctx);
+    assert.ok(
+      ctx.notifications.some(
+        (n) =>
+          n.message.includes("Successfully completed response after 2 continuation attempt(s)") &&
+          n.type === "info"
+      )
+    );
+  });
+
+  it("consolidates attempt counter across token truncation followed by rate limit retry", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+
+    // Attempt 1: Token limit truncation
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "length",
+          content: [{ type: "text", text: "Partially emitted code..." }],
+          timestamp: 20000,
+        },
+      },
+      ctx
+    );
+    assert.equal(pi.sentUserMessages.length, 1);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("attempt #1") && n.message.includes("Response truncated")
+      )
+    );
+
+    // Attempt 2: Rate limit error when agent continues
+    await pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Rate limit reached (429)",
+          timestamp: 20001,
+        },
+      },
+      ctx
+    );
+    assert.equal(pi.sentUserMessages.length, 2);
+    assert.ok(
+      ctx.notifications.some(
+        (n) => n.message.includes("attempt #2") && n.message.includes("Rate limit / quota error")
+      )
+    );
+
+    // Settle -> recovery notice with attempt count 2
+    await pi.emit("agent_settled", {}, ctx);
+    assert.ok(
+      ctx.notifications.some(
+        (n) =>
+          n.message.includes("Successfully recovered from rate limit after 2 retry attempt(s)") &&
+          n.type === "info"
+      )
+    );
+  });
 });
+
