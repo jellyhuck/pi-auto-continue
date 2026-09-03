@@ -1,4 +1,9 @@
-import { parseMaxRetries } from "./config.ts";
+import { parseDuration, parseMaxRetries } from "./config.ts";
+import {
+  DEFAULT_RATE_LIMIT_BASE_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_RETRIES,
+} from "./constants.ts";
 import { formatDateTime, formatDelay, formatDuration } from "./formatter.ts";
 import type { AutoContinueConfig, InterruptionType, RetryLimit, RetryState } from "./types.ts";
 
@@ -30,17 +35,60 @@ export class RetryManager {
 
   /**
    * Resolves the active retry limit for the given interruption type.
-   * Rate limits use rateLimit.maxRetries if specified, otherwise global maxRetries.
+   * Rate limits default to "5h" (5 hours duration limit), or rateLimit.maxRetries when specified.
+   * Rate limits do not fall back to global maxRetries.
    * All other types use global maxRetries.
    */
   public getActiveLimit(
     config: AutoContinueConfig,
     type: InterruptionType = "RATE_LIMIT"
   ): RetryLimit {
-    if (type === "RATE_LIMIT" && config.rateLimit.maxRetries !== undefined) {
-      return parseMaxRetries(config.rateLimit.maxRetries);
+    if (type === "RATE_LIMIT") {
+      const rawLimit =
+        config.rateLimit.maxRetries !== undefined
+          ? config.rateLimit.maxRetries
+          : DEFAULT_RATE_LIMIT_MAX_RETRIES;
+      return parseMaxRetries(rawLimit, parseMaxRetries(DEFAULT_RATE_LIMIT_MAX_RETRIES));
     }
     return parseMaxRetries(config.maxRetries);
+  }
+
+  /**
+   * Resolves the active base delay for the given interruption type.
+   * Rate limits default to 1 minute (60,000 ms), or rateLimit.baseDelayMs when specified.
+   * Rate limits do not fall back to the global baseDelayMs.
+   * All other types use global baseDelayMs.
+   */
+  public getBaseDelay(
+    config: AutoContinueConfig,
+    type: InterruptionType = "RATE_LIMIT"
+  ): number {
+    if (type === "RATE_LIMIT") {
+      if (config.rateLimit.baseDelayMs !== undefined) {
+        return parseDuration(config.rateLimit.baseDelayMs, DEFAULT_RATE_LIMIT_BASE_DELAY_MS);
+      }
+      return DEFAULT_RATE_LIMIT_BASE_DELAY_MS;
+    }
+    return config.baseDelayMs;
+  }
+
+  /**
+   * Resolves the active max delay cap for the given interruption type.
+   * Rate limits default to 10 minutes (600,000 ms), or rateLimit.maxDelayMs when specified.
+   * Rate limits do not fall back to global maxDelayMs.
+   * All other types use global maxDelayMs.
+   */
+  public getMaxDelay(
+    config: AutoContinueConfig,
+    type: InterruptionType = "RATE_LIMIT"
+  ): number {
+    if (type === "RATE_LIMIT") {
+      if (config.rateLimit.maxDelayMs !== undefined) {
+        return parseDuration(config.rateLimit.maxDelayMs, DEFAULT_RATE_LIMIT_MAX_DELAY_MS);
+      }
+      return DEFAULT_RATE_LIMIT_MAX_DELAY_MS;
+    }
+    return config.maxDelayMs;
   }
 
   /**
@@ -125,19 +173,22 @@ export class RetryManager {
         ? Math.max(0, expectedResetTime - now)
         : 0;
 
+    const baseDelayMs = this.getBaseDelay(config, "RATE_LIMIT");
+    const maxDelayMs = this.getMaxDelay(config, "RATE_LIMIT");
+
     if (!capToMaxDelay) {
       // Explicitly scheduled delay (e.g. /auto-continue at <time>): do not cap or modify
       delayMs = resetDelayMs;
     } else if (rateLimitAttempt === 1 && resetDelayMs > 0) {
       // First rate limit retry respects expected quota reset time: baseDelay + expected reset time
-      delayMs = config.baseDelayMs + resetDelayMs;
+      delayMs = baseDelayMs + resetDelayMs;
     } else {
       // Exponential backoff: baseDelay * backoff^(rateLimitAttempt - 1)
       const power = Math.max(0, rateLimitAttempt - 1);
       const rawDelay =
-        config.baseDelayMs * Math.pow(config.backoffMultiplier, power);
+        baseDelayMs * Math.pow(config.backoffMultiplier, power);
 
-      let calculated = Math.min(rawDelay, config.maxDelayMs);
+      let calculated = Math.min(rawDelay, maxDelayMs);
 
       // Apply random jitter (±15%) to avoid synchronized retry stampedes
       if (rateLimitConfig.jitter) {
@@ -145,7 +196,7 @@ export class RetryManager {
         calculated = Math.round(calculated * jitterFactor);
       }
 
-      delayMs = Math.max(config.baseDelayMs, calculated);
+      delayMs = Math.max(baseDelayMs, calculated);
     }
 
     const remainingMs =
@@ -286,11 +337,13 @@ export class RetryManager {
     }
 
     const nextAttempt = this.state.attempt + 1;
+    const baseDelayMs = this.getBaseDelay(config, type);
+    const maxDelayMs = this.getMaxDelay(config, type);
     const rawDelay =
-      config.baseDelayMs *
+      baseDelayMs *
       Math.pow(config.backoffMultiplier, Math.max(0, nextAttempt - 1));
 
-    let delayMs = Math.min(rawDelay, config.maxDelayMs);
+    let delayMs = Math.min(rawDelay, maxDelayMs);
 
     const remainingMs =
       limit.type === "duration" ? Math.max(0, limit.durationMs - elapsedMs) : 0;

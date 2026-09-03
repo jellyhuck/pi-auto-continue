@@ -20,6 +20,7 @@ describe("RetryManager", () => {
       backoffMultiplier: 2,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        baseDelayMs: 2000,
         jitter: false,
       },
     };
@@ -49,6 +50,7 @@ describe("RetryManager", () => {
       backoffMultiplier: 2,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        baseDelayMs: 5000,
         jitter: false,
       },
     };
@@ -81,6 +83,8 @@ describe("RetryManager", () => {
       backoffMultiplier: 2,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        baseDelayMs: 5000,
+        maxDelayMs: 10000,
         jitter: false,
       },
     };
@@ -114,6 +118,9 @@ describe("RetryManager", () => {
       maxRetries: 10,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        baseDelayMs: 5000,
+        maxDelayMs: 10000,
+        maxRetries: 10,
         jitter: false,
       },
     };
@@ -139,6 +146,8 @@ describe("RetryManager", () => {
       baseDelayMs: 1000,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        maxRetries: 2,
+        baseDelayMs: 1000,
         jitter: false,
       },
     };
@@ -169,6 +178,8 @@ describe("RetryManager", () => {
       baseDelayMs: 5000,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        maxRetries: "1m",
+        baseDelayMs: 5000,
         jitter: false,
       },
     };
@@ -203,6 +214,8 @@ describe("RetryManager", () => {
       backoffMultiplier: 2,
       rateLimit: {
         ...DEFAULT_CONFIG.rateLimit,
+        maxRetries: "30s",
+        baseDelayMs: 10000,
         jitter: false,
       },
     };
@@ -263,6 +276,90 @@ describe("RetryManager", () => {
     assert.equal(t2.deadlineExceeded, true);
   });
 
+  it("defaults rateLimit.baseDelayMs to 1 minute (without falling back to global baseDelayMs)", () => {
+    const manager = new RetryManager();
+    const config = {
+      ...DEFAULT_CONFIG,
+      baseDelayMs: 3000, // global: 3s
+      backoffMultiplier: 2,
+      maxRetries: 5,
+      rateLimit: {
+        ...DEFAULT_CONFIG.rateLimit,
+        jitter: false,
+      },
+    };
+
+    // 1. Check getBaseDelay helper directly:
+    // Rate limit defaults to 60,000 ms (1 minute), completely independent of global baseDelayMs (3000)
+    assert.equal(manager.getBaseDelay(config, "RATE_LIMIT"), 60000);
+    // Other interruption types (e.g. token limits) use global baseDelayMs (3000)
+    assert.equal(manager.getBaseDelay(config, "TOKEN_LIMIT"), 3000);
+    assert.equal(manager.getBaseDelay(config, "INCOMPLETE_TOOL_CALL"), 3000);
+
+    // 2. Custom override via rateLimit.baseDelayMs
+    const customConfig = {
+      ...config,
+      rateLimit: { ...config.rateLimit, baseDelayMs: 10000 },
+    };
+    assert.equal(manager.getBaseDelay(customConfig, "RATE_LIMIT"), 10000);
+
+    // Also supports string format in rateLimit.baseDelayMs (e.g. "25s")
+    const configWithStr = {
+      ...config,
+      rateLimit: { ...config.rateLimit, baseDelayMs: "25s" },
+    };
+    assert.equal(manager.getBaseDelay(configWithStr, "RATE_LIMIT"), 25000);
+
+    // 3. Evaluate rate limit retry with default 1-minute base delay
+    const now = 1000000;
+    // Attempt 1 with expected reset time: delayMs = rateLimit.baseDelayMs (60000) + resetDelayMs (15000)
+    const r1 = manager.evaluateRetry(config, "429 Rate limited", 15000, now);
+    assert.equal(r1.canRetry, true);
+    assert.equal(r1.delayMs, 60000 + 15000); // 75000
+
+    // Attempt 2: exponential backoff = 60000 * 2^(2-1) = 120000
+    const r2 = manager.evaluateRetry(config, "429 Rate limited", null, now + 75000);
+    assert.equal(r2.canRetry, true);
+    assert.equal(r2.delayMs, 120000);
+
+    // 4. Token continuation uses global baseDelayMs (3000), not the 1m rate limit default
+    const tokenManager = new RetryManager();
+    const t1 = tokenManager.evaluateContinuation(config, "TOKEN_LIMIT", "Truncated", now);
+    assert.equal(t1.canRetry, true);
+    assert.equal(t1.delayMs, 3000);
+  });
+
+  it("defaults rateLimit.maxDelayMs to 10 minutes and rateLimit.maxRetries to 5h independently", () => {
+    const manager = new RetryManager();
+    const config = {
+      ...DEFAULT_CONFIG,
+      maxDelayMs: 5000, // global: 5s
+      maxRetries: 2, // global: 2 attempts
+      rateLimit: {
+        ...DEFAULT_CONFIG.rateLimit,
+        jitter: false,
+      },
+    };
+
+    // 1. Checks helpers default independently without falling back to global settings
+    assert.equal(manager.getMaxDelay(config, "RATE_LIMIT"), 600000); // 10m
+    assert.equal(manager.getMaxDelay(config, "TOKEN_LIMIT"), 5000); // global
+    assert.deepEqual(manager.getActiveLimit(config, "RATE_LIMIT"), { type: "duration", durationMs: 18000000 }); // 5h = 18,000,000 ms
+    assert.deepEqual(manager.getActiveLimit(config, "TOKEN_LIMIT"), { type: "attempts", count: 2 }); // global
+
+    // 2. Custom overrides
+    const customConfig = {
+      ...config,
+      rateLimit: {
+        ...config.rateLimit,
+        maxDelayMs: "2m",
+        maxRetries: "30m",
+      },
+    };
+    assert.equal(manager.getMaxDelay(customConfig, "RATE_LIMIT"), 120000);
+    assert.deepEqual(manager.getActiveLimit(customConfig, "RATE_LIMIT"), { type: "duration", durationMs: 1800000 });
+  });
+
   it("resets state properly", () => {
     const manager = new RetryManager();
     manager.evaluateRetry(DEFAULT_CONFIG, "Error", null, 1000000);
@@ -280,7 +377,10 @@ describe("RetryManager", () => {
     assert.equal(manager.getStatusSummary(DEFAULT_CONFIG), "Idle (no active retry loop)");
 
     // Attempt-based status summary
-    const attemptConfig = { ...DEFAULT_CONFIG, maxRetries: 5 };
+    const attemptConfig = {
+      ...DEFAULT_CONFIG,
+      rateLimit: { ...DEFAULT_CONFIG.rateLimit, maxRetries: 5 },
+    };
     manager.evaluateRetry(attemptConfig, "HTTP 429 Quota Exceeded", null, 1000000);
     const summary = manager.getStatusSummary(attemptConfig, 1010000);
     assert.ok(summary.includes("Active Retry Loop:"));
@@ -290,13 +390,22 @@ describe("RetryManager", () => {
     assert.equal(summary.includes("Expected token reset time:"), false);
 
     // Duration-based status summary
-    const durationConfig = { ...DEFAULT_CONFIG, maxRetries: "1h" };
+    const durationConfig = {
+      ...DEFAULT_CONFIG,
+      rateLimit: { ...DEFAULT_CONFIG.rateLimit, maxRetries: "1h" },
+    };
     const durManager = new RetryManager();
     durManager.evaluateRetry(durationConfig, "HTTP 429", 30000, 1000000, 1030000, true);
     const durSummary = durManager.getStatusSummary(durationConfig, 1010000);
     assert.ok(durSummary.includes("Attempt: 1"));
     assert.ok(durSummary.includes("Max: 1h"));
     assert.ok(durSummary.includes("Expected token reset time:"));
+
+    // DEFAULT_CONFIG status summary defaults to 5h
+    const defaultManager = new RetryManager();
+    defaultManager.evaluateRetry(DEFAULT_CONFIG, "HTTP 429", null, 1000000);
+    const defaultSummary = defaultManager.getStatusSummary(DEFAULT_CONFIG, 1010000);
+    assert.ok(defaultSummary.includes("Max: 5h"));
   });
 
   it("evaluates continuation and advances attempts on shared retryState", () => {
@@ -402,7 +511,10 @@ describe("RetryManager", () => {
       const manager = new RetryManager();
       const config = {
         ...DEFAULT_CONFIG,
-        maxRetries: "1h", // 1 hour max duration
+        rateLimit: {
+          ...DEFAULT_CONFIG.rateLimit,
+          maxRetries: "1h", // 1 hour max duration
+        },
       };
 
       const now = 1000000;

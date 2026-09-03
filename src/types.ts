@@ -12,8 +12,18 @@ export interface RateLimitConfig {
   /** Whether to add random jitter (±15%) to retry delays (default: true) */
   jitter: boolean;
   /**
-   * Optional custom max retries for rate limits (attempts number or duration string like "15m").
-   * Falls back to global maxRetries if not specified.
+   * Base delay in ms for rate limits (duration number or string like "1m" or "10s").
+   * Defaults to 1 minute (60,000 ms), independent of global baseDelayMs.
+   */
+  baseDelayMs?: number | string;
+  /**
+   * Maximum single delay cap in ms for rate limits (duration number or string like "10m").
+   * Defaults to 10 minutes (600,000 ms), independent of global maxDelayMs.
+   */
+  maxDelayMs?: number | string;
+  /**
+   * Maximum retries or duration deadline for rate limits (attempts number or duration string like "5h").
+   * Defaults to "5h" (5 hours), independent of global maxRetries.
    */
   maxRetries?: number | string;
 }

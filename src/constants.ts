@@ -4,6 +4,9 @@ export const DEFAULT_BASE_DELAY_MS = 5000; // 5 seconds
 export const DEFAULT_MAX_DELAY_MS = 600000; // 10 minutes
 export const DEFAULT_BACKOFF_MULTIPLIER = 2;
 export const DEFAULT_MAX_RETRIES = 3;
+export const DEFAULT_RATE_LIMIT_BASE_DELAY_MS = 60000; // 1 minute (60,000 ms)
+export const DEFAULT_RATE_LIMIT_MAX_DELAY_MS = 600000; // 10 minutes (600,000 ms)
+export const DEFAULT_RATE_LIMIT_MAX_RETRIES = "5h"; // 5 hours
 
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   enabled: true,
@@ -13,6 +16,9 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
   maxRetries: DEFAULT_MAX_RETRIES,
   rateLimit: {
     enabled: true,
+    baseDelayMs: DEFAULT_RATE_LIMIT_BASE_DELAY_MS,
+    maxDelayMs: DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
+    maxRetries: DEFAULT_RATE_LIMIT_MAX_RETRIES,
     jitter: true,
   },
   tokenLimit: {

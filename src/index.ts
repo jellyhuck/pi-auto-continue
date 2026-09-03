@@ -1,6 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { classifyInterruption, extractRetryAfterInfo } from "./classifier.ts";
-import { loadConfig, parseMaxRetries, parseTargetTime } from "./config.ts";
+import { loadConfig, parseDuration, parseMaxRetries, parseTargetTime } from "./config.ts";
+import {
+  DEFAULT_RATE_LIMIT_BASE_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_RETRIES,
+} from "./constants.ts";
 import {
   formatDateTime,
   formatDelay,
@@ -612,15 +617,24 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         : "Idle (no active retry loop)";
 
       const globalLimit = parseMaxRetries(config.maxRetries);
-      const rateLimitRetries =
+      const rateLimitLimit =
         config.rateLimit.maxRetries !== undefined
-          ? formatMaxRetries(config.rateLimit.maxRetries)
-          : `${formatMaxRetries(globalLimit)} (uses global)`;
+          ? parseMaxRetries(config.rateLimit.maxRetries)
+          : parseMaxRetries(DEFAULT_RATE_LIMIT_MAX_RETRIES);
+
+      const rateLimitBaseDelay = formatDelay(
+        parseDuration(config.rateLimit.baseDelayMs, DEFAULT_RATE_LIMIT_BASE_DELAY_MS)
+      );
+      const rateLimitMaxDelay = formatDelay(
+        parseDuration(config.rateLimit.maxDelayMs, DEFAULT_RATE_LIMIT_MAX_DELAY_MS)
+      );
 
       const rateLimitLines = [
         `  Rate Limit Settings & Status:`,
         `    Retry: ${config.rateLimit.enabled ? "enabled" : "disabled"}`,
-        `    Max retries: ${rateLimitRetries}`,
+        `    Base delay: ${rateLimitBaseDelay}`,
+        `    Max delay: ${rateLimitMaxDelay}`,
+        `    Max retries: ${formatMaxRetries(rateLimitLimit)}`,
         `    Jitter: ${config.rateLimit.jitter ? "enabled" : "disabled"}`,
       ];
 

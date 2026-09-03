@@ -147,6 +147,9 @@ describe("config", () => {
       assert.equal(config.baseDelayMs, 5000);
       assert.equal(config.maxDelayMs, 600000);
       assert.equal(config.backoffMultiplier, 2);
+      assert.equal(config.rateLimit.baseDelayMs, 60000);
+      assert.equal(config.rateLimit.maxDelayMs, 600000);
+      assert.equal(config.rateLimit.maxRetries, "5h");
     });
 
     it("loads configuration from autoContinue section with global parameters and rateLimit overrides", () => {
@@ -162,6 +165,8 @@ describe("config", () => {
           backoffMultiplier: 3,
           rateLimit: {
             enabled: true,
+            baseDelayMs: "30s",
+            maxDelayMs: "2m",
             maxRetries: 5,
             jitter: false,
           },
@@ -181,6 +186,8 @@ describe("config", () => {
         assert.equal(config.maxRetries, "15m");
         assert.equal(config.backoffMultiplier, 3);
         assert.equal(config.rateLimit.enabled, true);
+        assert.equal(config.rateLimit.baseDelayMs, 30000);
+        assert.equal(config.rateLimit.maxDelayMs, 120000);
         assert.equal(config.rateLimit.jitter, false);
         assert.equal(config.rateLimit.maxRetries, 5);
         assert.equal(config.tokenLimit.continuePrompt, "Keep going please.");
@@ -189,13 +196,14 @@ describe("config", () => {
       }
     });
 
-    it("falls back to global maxRetries when rateLimit.maxRetries is not specified", () => {
+    it("defaults rateLimit.maxRetries to 5h and rateLimit.maxDelayMs to 10m when omitted", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-config-test-"));
       const tmpFile = path.join(tmpDir, "settings.json");
 
       const settings = {
         autoContinue: {
           maxRetries: 10,
+          maxDelayMs: "5m",
           rateLimit: {
             jitter: true,
           },
@@ -207,7 +215,86 @@ describe("config", () => {
       try {
         const config = loadConfig(tmpFile);
         assert.equal(config.maxRetries, 10);
-        assert.equal(config.rateLimit.maxRetries, undefined);
+        assert.equal(config.maxDelayMs, 300000);
+        assert.equal(config.rateLimit.maxRetries, "5h");
+        assert.equal(config.rateLimit.maxDelayMs, 600000);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("loads rateLimit.baseDelayMs when specified as string or number, and defaults to 1 minute when omitted or invalid", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-config-test-"));
+      const tmpFile = path.join(tmpDir, "settings.json");
+
+      // Case 1: rateLimit.baseDelayMs as duration string
+      const settingsWithStr = {
+        autoContinue: {
+          baseDelayMs: "5s",
+          rateLimit: {
+            baseDelayMs: "15s",
+          },
+        },
+      };
+      fs.writeFileSync(tmpFile, JSON.stringify(settingsWithStr));
+      try {
+        const config = loadConfig(tmpFile);
+        assert.equal(config.baseDelayMs, 5000);
+        assert.equal(config.rateLimit.baseDelayMs, 15000);
+      } finally {
+        fs.rmSync(tmpFile, { force: true });
+      }
+
+      // Case 2: rateLimit.baseDelayMs as numeric ms
+      const settingsWithNum = {
+        autoContinue: {
+          baseDelayMs: 3000,
+          rateLimit: {
+            baseDelayMs: 8000,
+          },
+        },
+      };
+      fs.writeFileSync(tmpFile, JSON.stringify(settingsWithNum));
+      try {
+        const config = loadConfig(tmpFile);
+        assert.equal(config.baseDelayMs, 3000);
+        assert.equal(config.rateLimit.baseDelayMs, 8000);
+      } finally {
+        fs.rmSync(tmpFile, { force: true });
+      }
+
+      // Case 3: rateLimit.baseDelayMs omitted (defaults to 1min = 60,000 ms, NOT global baseDelayMs of 4000)
+      const settingsOmitted = {
+        autoContinue: {
+          baseDelayMs: 4000,
+          rateLimit: {
+            jitter: false,
+          },
+        },
+      };
+      fs.writeFileSync(tmpFile, JSON.stringify(settingsOmitted));
+      try {
+        const config = loadConfig(tmpFile);
+        assert.equal(config.baseDelayMs, 4000);
+        assert.equal(config.rateLimit.baseDelayMs, 60000);
+      } finally {
+        fs.rmSync(tmpFile, { force: true });
+      }
+
+      // Case 4: rateLimit.baseDelayMs invalid (negative or non-duration string -> defaults to 60,000 ms)
+      const settingsInvalid = {
+        autoContinue: {
+          baseDelayMs: 5000,
+          rateLimit: {
+            baseDelayMs: "invalid-duration",
+          },
+        },
+      };
+      fs.writeFileSync(tmpFile, JSON.stringify(settingsInvalid));
+      try {
+        const config = loadConfig(tmpFile);
+        assert.equal(config.baseDelayMs, 5000);
+        assert.equal(config.rateLimit.baseDelayMs, 60000);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

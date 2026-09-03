@@ -62,6 +62,9 @@ describe("pi-auto-continue extension", () => {
         autoContinue: {
           enabled: true,
           baseDelayMs: 20,
+          rateLimit: {
+            baseDelayMs: 20,
+          },
         },
       })
     );
@@ -344,9 +347,111 @@ describe("pi-auto-continue extension", () => {
     assert.ok(msg.includes("Max retries:"));
     assert.ok(msg.includes("Backoff multiplier:"));
     assert.ok(msg.includes("Rate Limit Settings & Status:"));
+    assert.ok(msg.includes("Base delay: 20ms"));
+    assert.ok(msg.includes("Max delay: 10m"));
+    assert.ok(msg.includes("Max retries: 5h"));
+    assert.equal(msg.includes("20ms (uses global)"), false);
     assert.equal(msg.includes("Token Limit Settings & Status:"), false);
     // When idle and no Retry-After header received, expected token reset time is omitted
     assert.equal(msg.includes("Expected token reset time:"), false);
+  });
+
+  it("displays custom rateLimit.baseDelayMs in /auto-continue status", async () => {
+    const customTmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ext-custom-"));
+    const customSettings = path.join(customTmp, "settings.json");
+    fs.writeFileSync(
+      customSettings,
+      JSON.stringify({
+        autoContinue: {
+          enabled: true,
+          baseDelayMs: "5s",
+          rateLimit: {
+            baseDelayMs: "15s",
+          },
+        },
+      })
+    );
+
+    try {
+      const pi = new MockExtensionAPI();
+      extension(pi as any, customSettings);
+
+      const ctx = new MockContext();
+      const cmd = pi.commands.get("auto-continue");
+      await cmd.handler("status", ctx);
+
+      assert.equal(ctx.notifications.length, 1);
+      const msg = ctx.notifications[0].message;
+      assert.ok(msg.includes("Base delay: 15s"));
+      assert.equal(msg.includes("15s (uses global)"), false);
+    } finally {
+      fs.rmSync(customTmp, { recursive: true, force: true });
+    }
+  });
+
+  it("displays default 1m rateLimit.baseDelayMs in /auto-continue status when unspecified", async () => {
+    const defaultTmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ext-default-"));
+    const defaultSettings = path.join(defaultTmp, "settings.json");
+    fs.writeFileSync(
+      defaultSettings,
+      JSON.stringify({
+        autoContinue: {
+          enabled: true,
+          baseDelayMs: "5s",
+        },
+      })
+    );
+
+    try {
+      const pi = new MockExtensionAPI();
+      extension(pi as any, defaultSettings);
+
+      const ctx = new MockContext();
+      const cmd = pi.commands.get("auto-continue");
+      await cmd.handler("status", ctx);
+
+      assert.equal(ctx.notifications.length, 1);
+      const msg = ctx.notifications[0].message;
+      assert.ok(msg.includes("Base delay: 1m"));
+      assert.ok(msg.includes("Max delay: 10m"));
+      assert.ok(msg.includes("Max retries: 5h"));
+      assert.equal(msg.includes("1m (uses global)"), false);
+    } finally {
+      fs.rmSync(defaultTmp, { recursive: true, force: true });
+    }
+  });
+
+  it("displays custom rateLimit.maxDelayMs and rateLimit.maxRetries in /auto-continue status", async () => {
+    const customTmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-ext-custom-limits-"));
+    const customSettings = path.join(customTmp, "settings.json");
+    fs.writeFileSync(
+      customSettings,
+      JSON.stringify({
+        autoContinue: {
+          enabled: true,
+          rateLimit: {
+            maxDelayMs: "2m",
+            maxRetries: 10,
+          },
+        },
+      })
+    );
+
+    try {
+      const pi = new MockExtensionAPI();
+      extension(pi as any, customSettings);
+
+      const ctx = new MockContext();
+      const cmd = pi.commands.get("auto-continue");
+      await cmd.handler("status", ctx);
+
+      assert.equal(ctx.notifications.length, 1);
+      const msg = ctx.notifications[0].message;
+      assert.ok(msg.includes("Max delay: 2m"));
+      assert.ok(msg.includes("Max retries: 10"));
+    } finally {
+      fs.rmSync(customTmp, { recursive: true, force: true });
+    }
   });
 
   it("prints expected token reset time in YYYY-MM-DD HH:MM:SS format when Retry-After header is received", async () => {
@@ -544,14 +649,14 @@ describe("pi-auto-continue extension", () => {
 
     await cmd.handler(`at ${timeStr}`, ctx);
 
-    // Should emit retry notice: "Waiting XXs before retry (attempt #1 of 3, elapsed: 0s)..."
+    // Should emit retry notice: "Waiting XXs before retry (attempt #1, elapsed: 0s / max: 5h)..."
     const retryNotif = ctx.notifications.find((n) =>
-      n.message.includes("before retry (attempt #1 of 3")
+      n.message.includes("before retry (attempt #1, elapsed: 0s / max: 5h")
     );
     assert.ok(retryNotif, "Retry notification should be emitted");
     assert.ok(retryNotif.message.includes("Waiting"), "Notification should include 'Waiting'");
     assert.ok(
-      retryNotif.message.includes("attempt #1 of 3, elapsed: 0s"),
+      retryNotif.message.includes("attempt #1, elapsed: 0s / max: 5h"),
       `Notification should format attempt and elapsed: ${retryNotif.message}`
     );
     assert.ok(

@@ -1,7 +1,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_CONFIG, DEFAULT_MAX_RETRIES } from "./constants.ts";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_RATE_LIMIT_BASE_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
+  DEFAULT_RATE_LIMIT_MAX_RETRIES,
+} from "./constants.ts";
 import type { AutoContinueConfig, RetryLimit } from "./types.ts";
 
 /**
@@ -155,7 +161,17 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
     }
   }
 
-  let rateLimitMaxRetries: number | string | undefined = undefined;
+  const rateLimitBaseDelayMs = parseDuration(
+    rateLimitRaw.baseDelayMs,
+    DEFAULT_RATE_LIMIT_BASE_DELAY_MS
+  );
+
+  const rateLimitMaxDelayMs = parseDuration(
+    rateLimitRaw.maxDelayMs,
+    DEFAULT_RATE_LIMIT_MAX_DELAY_MS
+  );
+
+  let rateLimitMaxRetries: number | string = DEFAULT_RATE_LIMIT_MAX_RETRIES;
   if (rateLimitRaw.maxRetries !== undefined) {
     if (typeof rateLimitRaw.maxRetries === "number" && !isNaN(rateLimitRaw.maxRetries) && rateLimitRaw.maxRetries >= 0) {
       rateLimitMaxRetries = Math.round(rateLimitRaw.maxRetries);
@@ -172,8 +188,10 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
     maxRetries,
     rateLimit: {
       enabled: rateLimitRaw.enabled !== false,
+      baseDelayMs: rateLimitBaseDelayMs,
+      maxDelayMs: rateLimitMaxDelayMs,
+      maxRetries: rateLimitMaxRetries,
       jitter: rateLimitRaw.jitter !== false,
-      ...(rateLimitMaxRetries !== undefined ? { maxRetries: rateLimitMaxRetries } : {}),
     },
     tokenLimit: {
       enabled: tokenLimitRaw.enabled !== false,

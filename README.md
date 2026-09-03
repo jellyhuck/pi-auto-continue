@@ -60,8 +60,10 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
     "backoffMultiplier": 2,
     "rateLimit": {
       "enabled": true,
-      "jitter": true,
-      "maxRetries": 3
+      "baseDelayMs": "1m",
+      "maxDelayMs": "10m",
+      "maxRetries": "5h",
+      "jitter": true
     },
     "tokenLimit": {
       "enabled": true,
@@ -80,13 +82,15 @@ Configure `pi-auto-continue` in your `~/.pi/agent/settings.json` under the `auto
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `enabled` | `boolean` | `true` | Master switch to enable or disable the extension. |
-| `baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Global starting delay for exponential backoff across all retries. |
+| `baseDelayMs` | `number \| string` | `5000` (`"5s"`) | Global starting delay for exponential backoff (token continuations and tool calls). |
 | `maxDelayMs` | `number \| string` | `600000` (`"10m"`) | Global maximum delay cap for a single retry attempt. |
 | `maxRetries` | `number \| string` | `3` | Maximum retries: either a number of attempts (e.g. `3`) or a duration string (e.g. `"15m"`, `"5h"`). |
 | `backoffMultiplier` | `number` | `2` | Global multiplier for exponential backoff. |
 | `rateLimit.enabled` | `boolean` | `true` | Whether to automatically retry on rate limits and quota exhaustion. |
+| `rateLimit.baseDelayMs` | `number \| string` | `60000` (`"1m"`) | Base delay for rate limits and quota exhaustion retries (default: 1 minute). |
+| `rateLimit.maxDelayMs` | `number \| string` | `600000` (`"10m"`) | Maximum delay cap for a single rate limit retry attempt (default: 10 minutes). |
+| `rateLimit.maxRetries` | `number \| string` | `"5h"` | Maximum retries or duration deadline for rate limits (default: 5 hours). |
 | `rateLimit.jitter` | `boolean` | `true` | Adds ±15% random variation to rate limit delays to avoid synchronized retries. |
-| `rateLimit.maxRetries` | `number \| string` | *(uses global)* | Optional custom max retries for rate limits (attempts number or duration string). |
 | `tokenLimit.enabled` | `boolean` | `true` | Whether to continue responses truncated by max output tokens. |
 | `tokenLimit.continuePrompt` | `string` | *(default prompt)* | Prompt sent to LLM to resume text generation. |
 | `incompleteToolCall.enabled` | `boolean` | `true` | Whether to continue responses cut off mid tool call. |
