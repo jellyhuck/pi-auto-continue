@@ -4,6 +4,7 @@ import {
   formatDateTime,
   formatDelay,
   formatDuration,
+  formatMaxRetries,
   formatTime,
   truncateErrorMessage,
 } from "../src/formatter.ts";
@@ -95,6 +96,20 @@ describe("formatter", () => {
     it("handles zero-padded single-digit months, days, hours, mins, secs", () => {
       const date = new Date(2026, 0, 5, 8, 4, 3);
       assert.equal(formatDateTime(date), "2026-01-05 08:04:03");
+    });
+  });
+
+  describe("formatMaxRetries", () => {
+    it("formats attempts count limit", () => {
+      assert.equal(formatMaxRetries(3), "3 attempt(s)");
+      assert.equal(formatMaxRetries("5"), "5 attempt(s)");
+      assert.equal(formatMaxRetries({ type: "attempts", count: 10 }), "10 attempt(s)");
+    });
+
+    it("formats duration deadline limit", () => {
+      assert.equal(formatMaxRetries("15m"), "15m (900000 ms)");
+      assert.equal(formatMaxRetries("5h"), "5h (18000000 ms)");
+      assert.equal(formatMaxRetries({ type: "duration", durationMs: 60000 }), "1m (60000 ms)");
     });
   });
 });

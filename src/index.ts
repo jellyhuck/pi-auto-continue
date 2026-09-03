@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { classifyInterruption, extractRetryAfterInfo } from "./classifier.ts";
-import { loadConfig, parseTargetTime } from "./config.ts";
+import { loadConfig, parseMaxRetries, parseTargetTime } from "./config.ts";
 import {
   formatDateTime,
   formatDelay,
   formatDuration,
+  formatMaxRetries,
   formatTime,
   truncateErrorMessage,
 } from "./formatter.ts";
@@ -92,9 +93,9 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
             : "";
           notify(
             ctx,
-            `⏱️ Rate limit retry stopped: maximum retry duration of ${formatDuration(
-              config.rateLimit.maxRetryDurationMs
-            )} exceeded after ${retryResult.attempt} attempt(s).${errorSuffix}`,
+            `⏱️ Rate limit retry stopped: ${
+              retryResult.reason || "limit exceeded"
+            } after ${retryResult.attempt} attempt(s).${errorSuffix}`,
             "error"
           );
         }
@@ -108,11 +109,17 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
     }
 
     if (ctx?.hasUI) {
-      let waitMsg = `Waiting ${formatDelay(retryResult.delayMs)} before retry (attempt #${
-        retryResult.attempt
-      }, elapsed: ${formatDuration(retryResult.elapsedMs)} / max: ${formatDuration(
-        config.rateLimit.maxRetryDurationMs
-      )})...`;
+      const activeLimit = retryManager.getActiveLimit(config, "RATE_LIMIT");
+      const limitStr =
+        activeLimit.type === "duration"
+          ? `attempt #${retryResult.attempt}, elapsed: ${formatDuration(
+              retryResult.elapsedMs
+            )} / max: ${formatDuration(activeLimit.durationMs)}`
+          : `attempt #${retryResult.attempt} of ${activeLimit.count}, elapsed: ${formatDuration(
+              retryResult.elapsedMs
+            )}`;
+
+      let waitMsg = `Waiting ${formatDelay(retryResult.delayMs)} before retry (${limitStr})...`;
 
       if (errorMessage) {
         waitMsg =
@@ -358,9 +365,9 @@ When your response is cut off due to token limits or incomplete tool calls, you 
           if (ctx.hasUI) {
             notify(
               ctx,
-              `⏱️ Token limit continuation stopped: maximum duration of ${formatDuration(
-                config.tokenLimit.maxRetryDurationMs
-              )} exceeded after ${continuationResult.attempt} attempt(s).`,
+              `⏱️ Token limit continuation stopped: ${
+                continuationResult.reason || "limit exceeded"
+              } after ${continuationResult.attempt} attempt(s).`,
               "error"
             );
           }
@@ -434,9 +441,9 @@ When your response is cut off due to token limits or incomplete tool calls, you 
           if (ctx.hasUI) {
             notify(
               ctx,
-              `⏱️ Incomplete tool call continuation stopped: maximum duration of ${formatDuration(
-                config.tokenLimit.maxRetryDurationMs
-              )} exceeded after ${continuationResult.attempt} attempt(s).`,
+              `⏱️ Incomplete tool call continuation stopped: ${
+                continuationResult.reason || "limit exceeded"
+              } after ${continuationResult.attempt} attempt(s).`,
               "error"
             );
           }
@@ -604,14 +611,17 @@ When your response is cut off due to token limits or incomplete tool calls, you 
           )}, last delay: ${formatDelay(retryState.lastDelayMs)})`
         : "Idle (no active retry loop)";
 
+      const globalLimit = parseMaxRetries(config.maxRetries);
+      const rateLimitRetries =
+        config.rateLimit.maxRetries !== undefined
+          ? formatMaxRetries(config.rateLimit.maxRetries)
+          : `${formatMaxRetries(globalLimit)} (uses global)`;
+
       const rateLimitLines = [
         `  Rate Limit Settings & Status:`,
         `    Retry: ${config.rateLimit.enabled ? "enabled" : "disabled"}`,
-        `    Max retry duration: ${formatDuration(config.rateLimit.maxRetryDurationMs)} (${config.rateLimit.maxRetryDurationMs} ms)`,
-        `    Base delay / Max delay: ${formatDelay(config.rateLimit.baseDelayMs)} / ${formatDelay(config.rateLimit.maxDelayMs)}`,
-        `    Backoff multiplier: ${config.rateLimit.backoffMultiplier}x`,
+        `    Max retries: ${rateLimitRetries}`,
         `    Jitter: ${config.rateLimit.jitter ? "enabled" : "disabled"}`,
-        `    Current retry status: ${retryInfo}`,
       ];
 
       const expectedResetTime =
@@ -625,22 +635,15 @@ When your response is cut off due to token limits or incomplete tool calls, you 
         );
       }
 
-      const tokenLimitLines = [
-        `  Token Limit Settings & Status:`,
-        `    Continuations: ${config.tokenLimit.enabled ? "enabled" : "disabled"} (${retryState.attempt} attempt(s) in current turn)`,
-        `    Max retry duration: ${formatDuration(config.tokenLimit.maxRetryDurationMs)} (${config.tokenLimit.maxRetryDurationMs} ms)`,
-        `    Base delay / Max delay: ${formatDelay(config.tokenLimit.baseDelayMs)} / ${formatDelay(config.tokenLimit.maxDelayMs)}`,
-        `    Backoff multiplier: ${config.tokenLimit.backoffMultiplier}x`,
-        `    Incomplete tool call handling: ${config.incompleteToolCall.enabled ? "enabled" : "disabled"}`,
-      ];
-
       const statusText =
         `Auto-Continue Status:\n` +
         `  Global:\n` +
-        `    Enabled: ${config.enabled ? "yes" : "no"}\n\n` +
-        rateLimitLines.join("\n") +
-        `\n\n` +
-        tokenLimitLines.join("\n");
+        `    Enabled: ${config.enabled ? "yes" : "no"}\n` +
+        `    Base delay / Max delay: ${formatDelay(config.baseDelayMs)} / ${formatDelay(config.maxDelayMs)}\n` +
+        `    Max retries: ${formatMaxRetries(globalLimit)}\n` +
+        `    Backoff multiplier: ${config.backoffMultiplier}x\n` +
+        `    Current retry status: ${retryInfo}\n\n` +
+        rateLimitLines.join("\n");
 
       if (ctx.hasUI) {
         notify(ctx, statusText, "info");

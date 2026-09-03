@@ -1,5 +1,6 @@
+import { parseMaxRetries } from "./config.ts";
 import { formatDateTime, formatDelay, formatDuration } from "./formatter.ts";
-import type { AutoContinueConfig, RetryState } from "./types.ts";
+import type { AutoContinueConfig, InterruptionType, RetryLimit, RetryState } from "./types.ts";
 
 export interface RetryCheckResult {
   canRetry: boolean;
@@ -12,7 +13,7 @@ export interface RetryCheckResult {
 }
 
 /**
- * Manages retry state and deadlines for rate-limited sessions.
+ * Manages retry state and deadlines across all errors using global parameters.
  */
 export class RetryManager {
   private state: RetryState = {
@@ -25,6 +26,21 @@ export class RetryManager {
     retryAfterHeaderReceived: false,
     expectedTokenResetTime: undefined,
   };
+
+  /**
+   * Resolves the active retry limit for the given interruption type.
+   * Rate limits use rateLimit.maxRetries if specified, otherwise global maxRetries.
+   * All other types use global maxRetries.
+   */
+  public getActiveLimit(
+    config: AutoContinueConfig,
+    type: InterruptionType = "RATE_LIMIT"
+  ): RetryLimit {
+    if (type === "RATE_LIMIT" && config.rateLimit.maxRetries !== undefined) {
+      return parseMaxRetries(config.rateLimit.maxRetries);
+    }
+    return parseMaxRetries(config.maxRetries);
+  }
 
   /**
    * Evaluates whether a retry should be scheduled and calculates the next delay.
@@ -67,20 +83,34 @@ export class RetryManager {
       this.state.attempt = 0;
     }
 
+    const limit = this.getActiveLimit(config, "RATE_LIMIT");
     const elapsedMs = now - this.state.startTime;
-    const remainingMs = Math.max(0, rateLimitConfig.maxRetryDurationMs - elapsedMs);
 
-    // Check if maxRetryDurationMs deadline has already passed
-    if (elapsedMs >= rateLimitConfig.maxRetryDurationMs) {
-      return {
-        canRetry: false,
-        attempt: this.state.attempt,
-        delayMs: 0,
-        elapsedMs,
-        remainingMs: 0,
-        deadlineExceeded: true,
-        reason: `Maximum retry duration of ${formatDuration(rateLimitConfig.maxRetryDurationMs)} exceeded`,
-      };
+    if (limit.type === "duration") {
+      const remainingMs = Math.max(0, limit.durationMs - elapsedMs);
+      if (elapsedMs >= limit.durationMs) {
+        return {
+          canRetry: false,
+          attempt: this.state.attempt,
+          delayMs: 0,
+          elapsedMs,
+          remainingMs: 0,
+          deadlineExceeded: true,
+          reason: `Maximum retry duration of ${formatDuration(limit.durationMs)} exceeded`,
+        };
+      }
+    } else {
+      if (this.state.attempt >= limit.count) {
+        return {
+          canRetry: false,
+          attempt: this.state.attempt,
+          delayMs: 0,
+          elapsedMs,
+          remainingMs: 0,
+          deadlineExceeded: true,
+          reason: `Maximum retries limit of ${limit.count} attempt(s) exceeded`,
+        };
+      }
     }
 
     const nextAttempt = this.state.attempt + 1;
@@ -89,7 +119,7 @@ export class RetryManager {
     if (explicitDelayMs !== undefined && explicitDelayMs !== null && explicitDelayMs >= 0) {
       if (capToMaxDelay) {
         // Respect explicit provider Retry-After header/body hint, capped at maxDelayMs
-        delayMs = Math.min(explicitDelayMs, rateLimitConfig.maxDelayMs);
+        delayMs = Math.min(explicitDelayMs, config.maxDelayMs);
       } else {
         // Explicitly scheduled delay: do not cap at maxDelayMs
         delayMs = explicitDelayMs;
@@ -97,10 +127,10 @@ export class RetryManager {
     } else {
       // Exponential backoff
       const rawDelay =
-        rateLimitConfig.baseDelayMs *
-        Math.pow(rateLimitConfig.backoffMultiplier, Math.max(0, nextAttempt - 1));
+        config.baseDelayMs *
+        Math.pow(config.backoffMultiplier, Math.max(0, nextAttempt - 1));
 
-      let calculated = Math.min(rawDelay, rateLimitConfig.maxDelayMs);
+      let calculated = Math.min(rawDelay, config.maxDelayMs);
 
       // Apply random jitter (±15%) to avoid synchronized retry stampedes
       if (rateLimitConfig.jitter) {
@@ -108,24 +138,29 @@ export class RetryManager {
         calculated = Math.round(calculated * jitterFactor);
       }
 
-      delayMs = Math.max(rateLimitConfig.baseDelayMs, calculated);
+      delayMs = Math.max(config.baseDelayMs, calculated);
     }
 
-    if (!capToMaxDelay && delayMs > remainingMs) {
-      return {
-        canRetry: false,
-        attempt: this.state.attempt,
-        delayMs,
-        elapsedMs,
-        remainingMs,
-        deadlineExceeded: true,
-        reason: `Scheduled retry time exceeds maximum retry duration of ${formatDuration(rateLimitConfig.maxRetryDurationMs)}`,
-      };
-    }
+    const remainingMs =
+      limit.type === "duration" ? Math.max(0, limit.durationMs - elapsedMs) : 0;
 
-    // Ensure we don't sleep beyond the remaining retry duration for standard backoff
-    if (delayMs > remainingMs) {
-      delayMs = remainingMs;
+    if (limit.type === "duration") {
+      if (!capToMaxDelay && delayMs > remainingMs) {
+        return {
+          canRetry: false,
+          attempt: this.state.attempt,
+          delayMs,
+          elapsedMs,
+          remainingMs,
+          deadlineExceeded: true,
+          reason: `Scheduled retry time exceeds maximum retry duration of ${formatDuration(limit.durationMs)}`,
+        };
+      }
+
+      // Ensure we don't sleep beyond the remaining retry duration for standard backoff
+      if (delayMs > remainingMs) {
+        delayMs = remainingMs;
+      }
     }
 
     // Update state
@@ -178,7 +213,7 @@ export class RetryManager {
 
   /**
    * Evaluates whether an auto-continuation should be scheduled for token truncation or incomplete tool calls.
-   * Advances the attempt counter on the single consolidated RetryState and enforces duration deadlines.
+   * Advances the attempt counter on the single consolidated RetryState and enforces global retry limits.
    *
    * @param config The active auto-continue configuration
    * @param type Interruption type ("TOKEN_LIMIT" | "INCOMPLETE_TOOL_CALL")
@@ -208,8 +243,6 @@ export class RetryManager {
       };
     }
 
-    const tokenConfig = config.tokenLimit;
-
     // Initialize start time if this is the start of a retry/continuation cycle
     if (!this.state.isRetrying || this.state.startTime === null) {
       this.state.isRetrying = true;
@@ -217,31 +250,48 @@ export class RetryManager {
       this.state.attempt = 0;
     }
 
+    const limit = this.getActiveLimit(config, type);
     const elapsedMs = now - this.state.startTime;
-    const remainingMs = Math.max(0, tokenConfig.maxRetryDurationMs - elapsedMs);
 
-    // Check if maxRetryDurationMs deadline has already passed
-    if (elapsedMs >= tokenConfig.maxRetryDurationMs) {
-      return {
-        canRetry: false,
-        attempt: this.state.attempt,
-        delayMs: 0,
-        elapsedMs,
-        remainingMs: 0,
-        deadlineExceeded: true,
-        reason: `Maximum retry duration of ${formatDuration(tokenConfig.maxRetryDurationMs)} exceeded`,
-      };
+    if (limit.type === "duration") {
+      const remainingMs = Math.max(0, limit.durationMs - elapsedMs);
+      if (elapsedMs >= limit.durationMs) {
+        return {
+          canRetry: false,
+          attempt: this.state.attempt,
+          delayMs: 0,
+          elapsedMs,
+          remainingMs: 0,
+          deadlineExceeded: true,
+          reason: `Maximum retry duration of ${formatDuration(limit.durationMs)} exceeded`,
+        };
+      }
+    } else {
+      if (this.state.attempt >= limit.count) {
+        return {
+          canRetry: false,
+          attempt: this.state.attempt,
+          delayMs: 0,
+          elapsedMs,
+          remainingMs: 0,
+          deadlineExceeded: true,
+          reason: `Maximum retries limit of ${limit.count} attempt(s) exceeded`,
+        };
+      }
     }
 
     const nextAttempt = this.state.attempt + 1;
     const rawDelay =
-      tokenConfig.baseDelayMs *
-      Math.pow(tokenConfig.backoffMultiplier, Math.max(0, nextAttempt - 1));
+      config.baseDelayMs *
+      Math.pow(config.backoffMultiplier, Math.max(0, nextAttempt - 1));
 
-    let delayMs = Math.min(rawDelay, tokenConfig.maxDelayMs);
+    let delayMs = Math.min(rawDelay, config.maxDelayMs);
+
+    const remainingMs =
+      limit.type === "duration" ? Math.max(0, limit.durationMs - elapsedMs) : 0;
 
     // Ensure we don't sleep beyond the remaining retry duration
-    if (delayMs > remainingMs) {
+    if (limit.type === "duration" && delayMs > remainingMs) {
       delayMs = remainingMs;
     }
 
@@ -316,18 +366,29 @@ export class RetryManager {
     }
 
     const elapsed = now - this.state.startTime;
-    const maxDuration =
-      this.state.lastInterruptionType === "TOKEN_LIMIT" ||
-      this.state.lastInterruptionType === "INCOMPLETE_TOOL_CALL"
-        ? config.tokenLimit.maxRetryDurationMs
-        : config.rateLimit.maxRetryDurationMs;
-    const remaining = Math.max(0, maxDuration - elapsed);
+    const limit = this.getActiveLimit(
+      config,
+      this.state.lastInterruptionType || "RATE_LIMIT"
+    );
+
+    let limitLines = "";
+    if (limit.type === "duration") {
+      const remaining = Math.max(0, limit.durationMs - elapsed);
+      limitLines =
+        `  Attempt: ${this.state.attempt}\n` +
+        `  Elapsed: ${formatDuration(elapsed)} / Max: ${formatDuration(limit.durationMs)}\n` +
+        `  Remaining: ${formatDuration(remaining)}`;
+    } else {
+      const remaining = Math.max(0, limit.count - this.state.attempt);
+      limitLines =
+        `  Attempt: ${this.state.attempt} / Max: ${limit.count}\n` +
+        `  Elapsed: ${formatDuration(elapsed)}\n` +
+        `  Remaining attempts: ${remaining}`;
+    }
 
     let summary =
       `Active Retry Loop:\n` +
-      `  Attempt: ${this.state.attempt}\n` +
-      `  Elapsed: ${formatDuration(elapsed)} / Max: ${formatDuration(maxDuration)}\n` +
-      `  Remaining: ${formatDuration(remaining)}\n` +
+      limitLines + `\n` +
       `  Last delay: ${formatDelay(this.state.lastDelayMs)}\n` +
       `  Last error: ${this.state.lastErrorMessage || "None"}`;
 
@@ -338,4 +399,3 @@ export class RetryManager {
     return summary;
   }
 }
-

@@ -2,38 +2,25 @@
  * Configuration and state type definitions for pi-auto-continue extension.
  */
 
+export type RetryLimit =
+  | { type: "attempts"; count: number }
+  | { type: "duration"; durationMs: number };
+
 export interface RateLimitConfig {
   /** Whether to automatically retry on rate/quota limit errors (default: true) */
   enabled: boolean;
-  /**
-   * Maximum total duration in milliseconds to keep retrying after the first rate limit failure.
-   * Retries stop once this duration has elapsed (default: 18,000,000 ms = 5 hours).
-   */
-  maxRetryDurationMs: number;
-  /** Base delay in ms for exponential backoff (default: 5,000 ms = 5 seconds) */
-  baseDelayMs: number;
-  /** Maximum single delay in ms (default: 60,000 ms = 1 minute) */
-  maxDelayMs: number;
-  /** Multiplier for exponential backoff (default: 2) */
-  backoffMultiplier: number;
-  /** Whether to add random jitter to retry delays to avoid thundering herd (default: true) */
+  /** Whether to add random jitter (±15%) to retry delays (default: true) */
   jitter: boolean;
+  /**
+   * Optional custom max retries for rate limits (attempts number or duration string like "15m").
+   * Falls back to global maxRetries if not specified.
+   */
+  maxRetries?: number | string;
 }
 
 export interface TokenLimitConfig {
   /** Whether to automatically continue truncated responses (default: true) */
   enabled: boolean;
-  /**
-   * Maximum total duration in milliseconds to keep continuing after the first token limit truncation.
-   * Continuations stop once this duration has elapsed (default: 18,000,000 ms = 5 hours).
-   */
-  maxRetryDurationMs: number;
-  /** Base delay in ms for exponential backoff on continuation (default: 5,000 ms = 5 seconds) */
-  baseDelayMs: number;
-  /** Maximum single delay in ms (default: 60,000 ms = 1 minute) */
-  maxDelayMs: number;
-  /** Multiplier for exponential backoff (default: 2) */
-  backoffMultiplier: number;
   /** Prompt sent when response is truncated due to max output tokens */
   continuePrompt: string;
 }
@@ -48,6 +35,17 @@ export interface IncompleteToolCallConfig {
 export interface AutoContinueConfig {
   /** Master switch to enable/disable auto-continue (default: true) */
   enabled: boolean;
+  /** Base delay in ms for exponential backoff (default: 5,000 ms = 5 seconds) */
+  baseDelayMs: number;
+  /** Maximum single delay in ms (default: 600,000 ms = 10 minutes) */
+  maxDelayMs: number;
+  /** Multiplier for exponential backoff (default: 2) */
+  backoffMultiplier: number;
+  /**
+   * Maximum retries: either a number of attempts (e.g. 3) or a duration string (e.g. "15m", "5h").
+   * Defaults to 3 attempts.
+   */
+  maxRetries: number | string;
   /** Rate limit and quota exhaustion retry settings */
   rateLimit: RateLimitConfig;
   /** Token limit truncation handling settings */
@@ -92,8 +90,6 @@ export interface RetryState {
   retryAfterHeaderReceived?: boolean;
   /** Expected epoch timestamp (ms) when tokens/quota reset from Retry-After header */
   expectedTokenResetTime?: number;
-  /** Optional alias for attempt retained for backward compatibility */
-  count?: number;
   /** Optional timestamp of last processed message */
   lastMessageTimestamp?: number;
 }

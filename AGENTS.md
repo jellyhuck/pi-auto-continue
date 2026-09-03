@@ -146,11 +146,11 @@ Extracts delays from:
 - **Exponential Backoff Formula**: $\text{rawDelay} = \text{baseDelayMs} \times (\text{backoffMultiplier})^{\text{attempt} - 1}$
 - **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) on rate limits to prevent synchronized retry stampedes.
 - **Clamping**: $\text{delayMs} = \min(\text{maxDelayMs}, \max(\text{baseDelayMs}, \text{calculatedDelay}))$.
-- **Deadline Enforcement**: If $\text{elapsedMs} \ge \text{maxRetryDurationMs}$, aborts retry and emits an error notice.
+- **Limit Enforcement**: Stops retries when attempt count exceeds numeric `maxRetries` or elapsed time exceeds duration-based `maxRetries`. Rate limit errors can specify their own `maxRetries` and `jitter`.
 
-### 4. Configuration & Duration Parser (`src/config.ts`)
-- Parses human-readable durations: `"5h"`, `"30m"`, `"45s"`, `"500ms"`, `"1d"`, or numeric milliseconds.
-- Reads `~/.pi/agent/settings.json` from `autoContinue` block with legacy fallback to `autoResume`.
+### 4. Configuration & Retry Parser (`src/config.ts`)
+- Parses human-readable durations (`"15m"`, `"30s"`, `"500ms"`, `"5h"`) and `maxRetries` values (`3`, `"5"`, `"15m"`).
+- Reads `~/.pi/agent/settings.json` from the `autoContinue` block with global retry settings (`baseDelayMs`, `maxDelayMs`, `maxRetries`, `backoffMultiplier`).
 - Safe fallbacks ensure zero crash behavior on malformed JSON or missing configuration files.
 
 ---
@@ -171,9 +171,6 @@ Extracts delays from:
      - `info`: Successful recovery, standard continuations, status commands.
      - `warning`: Rate limit detected, retry waiting notice.
      - `error`: Deadline exceeded, non-retryable billing errors, critical failures.
-
-4. **Backward Compatibility**:
-   - Maintain fallback parsing for legacy `autoResume` configuration properties in settings.json.
 
 5. **Testing Strategy**:
    - Test files live in `tests/` and end in `.test.ts`.

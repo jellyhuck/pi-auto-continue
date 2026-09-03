@@ -1,27 +1,22 @@
 import type { AutoContinueConfig } from "./types.ts";
 
-/**
- * 5 hours in milliseconds.
- * Matches common AI provider quota refresh cycles (e.g. Claude Pro 5h reset windows).
- */
-export const DEFAULT_MAX_RETRY_DURATION_MS = 5 * 60 * 60 * 1000; // 18,000,000 ms
+export const DEFAULT_BASE_DELAY_MS = 5000; // 5 seconds
+export const DEFAULT_MAX_DELAY_MS = 600000; // 10 minutes
+export const DEFAULT_BACKOFF_MULTIPLIER = 2;
+export const DEFAULT_MAX_RETRIES = 3;
 
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   enabled: true,
+  baseDelayMs: DEFAULT_BASE_DELAY_MS,
+  maxDelayMs: DEFAULT_MAX_DELAY_MS,
+  backoffMultiplier: DEFAULT_BACKOFF_MULTIPLIER,
+  maxRetries: DEFAULT_MAX_RETRIES,
   rateLimit: {
     enabled: true,
-    maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
-    baseDelayMs: 5000, // 5 seconds
-    maxDelayMs: 600000, // 10 minutes
-    backoffMultiplier: 3,
     jitter: true,
   },
   tokenLimit: {
     enabled: true,
-    maxRetryDurationMs: DEFAULT_MAX_RETRY_DURATION_MS,
-    baseDelayMs: 5000, // 5 seconds
-    maxDelayMs: 600000, // 10 minutes
-    backoffMultiplier: 6,
     continuePrompt:
       "Continue from where you left off. Do not repeat what you've already written. Pick up exactly where the previous response was cut off.",
   },

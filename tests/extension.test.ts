@@ -61,8 +61,7 @@ describe("pi-auto-continue extension", () => {
       JSON.stringify({
         autoContinue: {
           enabled: true,
-          rateLimit: { baseDelayMs: 20 },
-          tokenLimit: { baseDelayMs: 20 },
+          baseDelayMs: 20,
         },
       })
     );
@@ -303,7 +302,7 @@ describe("pi-auto-continue extension", () => {
 
     assert.ok(
       ctx.notifications.some(
-        (n) => n.message.includes("Auto-Continue Status:") && n.message.includes("Max retry duration:")
+        (n) => n.message.includes("Auto-Continue Status:") && n.message.includes("Max retries:")
       )
     );
   });
@@ -328,7 +327,7 @@ describe("pi-auto-continue extension", () => {
     }
   });
 
-  it("reformats /auto-continue status response to cleanly separate Rate Limit and Token Limit", async () => {
+  it("formats /auto-continue status response with global retry parameters and removes token limit section", async () => {
     const pi = new MockExtensionAPI();
     extension(pi as any, testSettingsPath);
 
@@ -341,9 +340,11 @@ describe("pi-auto-continue extension", () => {
 
     assert.ok(msg.includes("Auto-Continue Status:"));
     assert.ok(msg.includes("Global:"));
-    assert.ok(msg.includes("Rate Limit Settings & Status:"));
-    assert.ok(msg.includes("Token Limit Settings & Status:"));
+    assert.ok(msg.includes("Base delay / Max delay:"));
+    assert.ok(msg.includes("Max retries:"));
     assert.ok(msg.includes("Backoff multiplier:"));
+    assert.ok(msg.includes("Rate Limit Settings & Status:"));
+    assert.equal(msg.includes("Token Limit Settings & Status:"), false);
     // When idle and no Retry-After header received, expected token reset time is omitted
     assert.equal(msg.includes("Expected token reset time:"), false);
   });
@@ -543,15 +544,15 @@ describe("pi-auto-continue extension", () => {
 
     await cmd.handler(`at ${timeStr}`, ctx);
 
-    // Should emit retry notice: "Waiting XXs before retry (attempt #1, elapsed: Xs / max: 5h)..."
+    // Should emit retry notice: "Waiting XXs before retry (attempt #1 of 3, elapsed: 0s)..."
     const retryNotif = ctx.notifications.find((n) =>
-      n.message.includes("before retry (attempt #1")
+      n.message.includes("before retry (attempt #1 of 3")
     );
     assert.ok(retryNotif, "Retry notification should be emitted");
     assert.ok(retryNotif.message.includes("Waiting"), "Notification should include 'Waiting'");
     assert.ok(
-      retryNotif.message.includes("elapsed: 0s / max: 5h"),
-      `Notification should format elapsed and max duration: ${retryNotif.message}`
+      retryNotif.message.includes("attempt #1 of 3, elapsed: 0s"),
+      `Notification should format attempt and elapsed: ${retryNotif.message}`
     );
     assert.ok(
       retryNotif.message.includes("Expected token reset time:"),

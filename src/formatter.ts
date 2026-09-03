@@ -1,6 +1,21 @@
+import { parseMaxRetries } from "./config.ts";
+import type { RetryLimit } from "./types.ts";
+
 /**
- * Formatting utilities for timestamps, durations, and UI messages.
+ * Formats a retry limit (either attempts count or duration) to a human-readable string.
+ * Examples: "3 attempt(s)", "5h (18000000 ms)", "15m (900000 ms)"
  */
+export function formatMaxRetries(limit: RetryLimit | number | string): string {
+  const resolved =
+    typeof limit === "object" && limit !== null && "type" in limit
+      ? limit
+      : parseMaxRetries(limit);
+
+  if (resolved.type === "attempts") {
+    return `${resolved.count} attempt(s)`;
+  }
+  return `${formatDuration(resolved.durationMs)} (${resolved.durationMs} ms)`;
+}
 
 /**
  * Formats a duration in milliseconds to a human-readable string.
