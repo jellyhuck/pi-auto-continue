@@ -5,6 +5,7 @@ import {
   DEFAULT_RATE_LIMIT_BASE_DELAY_MS,
   DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
   DEFAULT_RATE_LIMIT_MAX_RETRIES,
+  DEFAULT_RATE_LIMIT_RETRY_PROMPT,
 } from "./constants.ts";
 import {
   formatDateTime,
@@ -166,10 +167,12 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
 
       isSendingOwnRetryPrompt = true;
       try {
-        pi.sendUserMessage(
-          "The previous request encountered a rate/quota limit. Please continue with your task.",
-          { deliverAs: "followUp", streamingBehavior: "followUp" } as any
-        );
+        const retryPrompt =
+          config.rateLimit.retryPrompt || DEFAULT_RATE_LIMIT_RETRY_PROMPT;
+        pi.sendUserMessage(retryPrompt, {
+          deliverAs: "followUp",
+          streamingBehavior: "followUp",
+        } as any);
       } finally {
         queueMicrotask(() => {
           isSendingOwnRetryPrompt = false;
@@ -240,6 +243,8 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
     // B. Programmatic messages from auto-continue itself
     const isOwnPrompt =
       isSendingOwnRetryPrompt ||
+      event.text === config.rateLimit.retryPrompt ||
+      event.text === DEFAULT_RATE_LIMIT_RETRY_PROMPT ||
       event.text ===
         "The previous request encountered a rate/quota limit. Please continue with your task." ||
       event.text === config.tokenLimit.continuePrompt ||
@@ -282,10 +287,11 @@ export default function (pi: ExtensionAPI, customSettingsPath?: string) {
     const autoContinueGuidance = `
 
 ## Auto-Continue Behavior
-When your response is cut off due to token limits or incomplete tool calls, you will automatically receive a continuation prompt.
-- Do NOT repeat what you have already written.
-- Continue immediately and seamlessly from where the previous response ended.
-- If a tool call was cut off mid-arguments, complete the tool call.
+When your response is interrupted due to output token limits, incomplete tool calls, or provider rate limits, an automated continuation prompt will be sent.
+- Do NOT repeat text, code, or tool executions already completed.
+- Resume seamlessly and immediately at the exact cutoff point without conversational preamble, apologies, or filler (e.g., avoid "Sure, continuing...", "Here is the rest:").
+- If a tool call was cut off mid-arguments, re-issue the complete, valid tool call directly.
+- If resuming after a rate limit pause, check current state and continue executing your plan without discussing the delay.
 `;
 
     return {

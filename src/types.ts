@@ -26,6 +26,8 @@ export interface RateLimitConfig {
    * Defaults to "5h" (5 hours), independent of global maxRetries.
    */
   maxRetries?: number | string;
+  /** Prompt sent when retrying after a provider rate or quota limit error */
+  retryPrompt?: string;
 }
 
 export interface TokenLimitConfig {

@@ -169,9 +169,13 @@ describe("config", () => {
             maxDelayMs: "2m",
             maxRetries: 5,
             jitter: false,
+            retryPrompt: "Custom rate limit prompt.",
           },
           tokenLimit: {
             continuePrompt: "Keep going please.",
+          },
+          incompleteToolCall: {
+            continuePrompt: "Complete the tool please.",
           },
         },
       };
@@ -190,7 +194,9 @@ describe("config", () => {
         assert.equal(config.rateLimit.maxDelayMs, 120000);
         assert.equal(config.rateLimit.jitter, false);
         assert.equal(config.rateLimit.maxRetries, 5);
+        assert.equal(config.rateLimit.retryPrompt, "Custom rate limit prompt.");
         assert.equal(config.tokenLimit.continuePrompt, "Keep going please.");
+        assert.equal(config.incompleteToolCall.continuePrompt, "Complete the tool please.");
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

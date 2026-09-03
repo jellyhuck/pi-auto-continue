@@ -22,10 +22,20 @@
     "auto-resume",
     "retry",
     "rate-limit",
-    "quota"
+    "quota",
+    "quota-limit",
+    "quota-reset"
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jellyhuck/pi-auto-continue.git"
+  },
+  "homepage": "https://github.com/jellyhuck/pi-auto-continue#readme",
+  "bugs": {
+    "url": "https://github.com/jellyhuck/pi-auto-continue/issues"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.80.0"
   },

@@ -192,17 +192,24 @@ export function loadConfig(customSettingsPath?: string): AutoContinueConfig {
       maxDelayMs: rateLimitMaxDelayMs,
       maxRetries: rateLimitMaxRetries,
       jitter: rateLimitRaw.jitter !== false,
+      retryPrompt:
+        typeof rateLimitRaw.retryPrompt === "string" && rateLimitRaw.retryPrompt.trim().length > 0
+          ? rateLimitRaw.retryPrompt.trim()
+          : DEFAULT_CONFIG.rateLimit.retryPrompt,
     },
     tokenLimit: {
       enabled: tokenLimitRaw.enabled !== false,
       continuePrompt:
-        tokenLimitRaw.continuePrompt || DEFAULT_CONFIG.tokenLimit.continuePrompt,
+        typeof tokenLimitRaw.continuePrompt === "string" && tokenLimitRaw.continuePrompt.trim().length > 0
+          ? tokenLimitRaw.continuePrompt.trim()
+          : DEFAULT_CONFIG.tokenLimit.continuePrompt,
     },
     incompleteToolCall: {
       enabled: incompleteToolCallRaw.enabled !== false,
       continuePrompt:
-        incompleteToolCallRaw.continuePrompt ||
-        DEFAULT_CONFIG.incompleteToolCall.continuePrompt,
+        typeof incompleteToolCallRaw.continuePrompt === "string" && incompleteToolCallRaw.continuePrompt.trim().length > 0
+          ? incompleteToolCallRaw.continuePrompt.trim()
+          : DEFAULT_CONFIG.incompleteToolCall.continuePrompt,
     },
   };
 }

@@ -149,7 +149,7 @@ Extracts delays from:
   - **Subsequent Attempts & Continuations**: Follows exponential backoff: $\text{rawDelay} = \text{baseDelayMs} \times (\text{backoffMultiplier})^{\text{attempt} - 1}$.
 - **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) on rate limits during exponential backoff to prevent synchronized retry stampedes.
 - **Clamping**: $\text{delayMs} = \min(\text{maxDelayMs}, \max(\text{baseDelayMs}, \text{calculatedDelay}))$. Rate limits default to 10 minutes (600,000 ms) via `rateLimit.maxDelayMs`. First attempts with explicit quota reset time are not clamped to `maxDelayMs` to respect the full quota reset window.
-- **Limit Enforcement**: Stops retries when attempt count exceeds numeric `maxRetries` or elapsed time exceeds duration-based `maxRetries`. Rate limits default to a 5-hour duration deadline (`"5h"`) via `rateLimit.maxRetries`, independent of global `maxRetries`. Rate limit errors can specify their own `baseDelayMs`, `maxDelayMs`, `maxRetries`, and `jitter`.
+- **Limit Enforcement**: Stops retries when attempt count exceeds numeric `maxRetries` or elapsed time exceeds duration-based `maxRetries`. Rate limits default to a 5-hour duration deadline (`"5h"`) via `rateLimit.maxRetries`, independent of global `maxRetries`. Rate limit errors can specify their own `baseDelayMs`, `maxDelayMs`, `maxRetries`, `jitter`, and `retryPrompt`.
 
 ### 4. Configuration & Retry Parser (`src/config.ts`)
 - Parses human-readable durations (`"15m"`, `"30s"`, `"500ms"`, `"5h"`) and `maxRetries` values (`3`, `"5"`, `"15m"`).

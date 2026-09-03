@@ -8,6 +8,15 @@ export const DEFAULT_RATE_LIMIT_BASE_DELAY_MS = 60000; // 1 minute (60,000 ms)
 export const DEFAULT_RATE_LIMIT_MAX_DELAY_MS = 600000; // 10 minutes (600,000 ms)
 export const DEFAULT_RATE_LIMIT_MAX_RETRIES = "5h"; // 5 hours
 
+export const DEFAULT_RATE_LIMIT_RETRY_PROMPT =
+  "The previous request encountered a provider rate/quota limit, which has now resolved. Please resume your task directly from where you left off. Do not apologize or discuss the delay—proceed immediately with the next step.";
+
+export const DEFAULT_TOKEN_LIMIT_CONTINUE_PROMPT =
+  "Continue from where you left off without repeating any text or code already provided. Do not add conversational preamble, explanations, or filler—resume output immediately at the exact point of interruption.";
+
+export const DEFAULT_INCOMPLETE_TOOL_CALL_CONTINUE_PROMPT =
+  "Your previous response was cut off while emitting a tool call, leaving arguments incomplete. Please re-issue the complete tool call with all required arguments. Do not add conversational preamble, explanations, or apologies—proceed directly with executing the tool call, or provide your final response if finished.";
+
 export const DEFAULT_CONFIG: AutoContinueConfig = {
   enabled: true,
   baseDelayMs: DEFAULT_BASE_DELAY_MS,
@@ -20,16 +29,15 @@ export const DEFAULT_CONFIG: AutoContinueConfig = {
     maxDelayMs: DEFAULT_RATE_LIMIT_MAX_DELAY_MS,
     maxRetries: DEFAULT_RATE_LIMIT_MAX_RETRIES,
     jitter: true,
+    retryPrompt: DEFAULT_RATE_LIMIT_RETRY_PROMPT,
   },
   tokenLimit: {
     enabled: true,
-    continuePrompt:
-      "Continue from where you left off. Do not repeat what you've already written. Pick up exactly where the previous response was cut off.",
+    continuePrompt: DEFAULT_TOKEN_LIMIT_CONTINUE_PROMPT,
   },
   incompleteToolCall: {
     enabled: true,
-    continuePrompt:
-      "Your previous response was cut off mid-tool-call. Please complete the tool call you were making, or if you were finished with tool calls, provide your final response.",
+    continuePrompt: DEFAULT_INCOMPLETE_TOOL_CALL_CONTINUE_PROMPT,
   },
 };
 
