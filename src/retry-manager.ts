@@ -20,6 +20,7 @@ export class RetryManager {
     isRetrying: false,
     startTime: null,
     attempt: 0,
+    rateLimitAttempts: 0,
     lastDelayMs: 0,
     lastErrorMessage: undefined,
     lastInterruptionType: undefined,
@@ -114,21 +115,27 @@ export class RetryManager {
     }
 
     const nextAttempt = this.state.attempt + 1;
+    const rateLimitAttempt = (this.state.rateLimitAttempts ?? 0) + 1;
     let delayMs: number;
 
-    if (explicitDelayMs !== undefined && explicitDelayMs !== null && explicitDelayMs >= 0) {
-      if (capToMaxDelay) {
-        // Respect explicit provider Retry-After header/body hint, capped at maxDelayMs
-        delayMs = Math.min(explicitDelayMs, config.maxDelayMs);
-      } else {
-        // Explicitly scheduled delay: do not cap at maxDelayMs
-        delayMs = explicitDelayMs;
-      }
+    const resetDelayMs =
+      explicitDelayMs !== undefined && explicitDelayMs !== null && explicitDelayMs >= 0
+        ? explicitDelayMs
+        : expectedResetTime !== undefined && expectedResetTime !== null
+        ? Math.max(0, expectedResetTime - now)
+        : 0;
+
+    if (!capToMaxDelay) {
+      // Explicitly scheduled delay (e.g. /auto-continue at <time>): do not cap or modify
+      delayMs = resetDelayMs;
+    } else if (rateLimitAttempt === 1 && resetDelayMs > 0) {
+      // First rate limit retry respects expected quota reset time: baseDelay + expected reset time
+      delayMs = config.baseDelayMs + resetDelayMs;
     } else {
-      // Exponential backoff
+      // Exponential backoff: baseDelay * backoff^(rateLimitAttempt - 1)
+      const power = Math.max(0, rateLimitAttempt - 1);
       const rawDelay =
-        config.baseDelayMs *
-        Math.pow(config.backoffMultiplier, Math.max(0, nextAttempt - 1));
+        config.baseDelayMs * Math.pow(config.backoffMultiplier, power);
 
       let calculated = Math.min(rawDelay, config.maxDelayMs);
 
@@ -165,17 +172,15 @@ export class RetryManager {
 
     // Update state
     this.state.attempt = nextAttempt;
+    this.state.rateLimitAttempts = rateLimitAttempt;
     this.state.lastDelayMs = delayMs;
     this.state.lastErrorMessage = errorMessage;
     this.state.lastInterruptionType = "RATE_LIMIT";
     this.state.nextRetryTime = now + delayMs;
     this.state.retryAfterHeaderReceived = Boolean(retryAfterHeaderReceived);
     this.state.expectedTokenResetTime =
-      retryAfterHeaderReceived && expectedResetTime
-        ? expectedResetTime
-        : retryAfterHeaderReceived
-        ? now + delayMs
-        : undefined;
+      expectedResetTime ??
+      (retryAfterHeaderReceived ? now + delayMs : undefined);
 
     return {
       canRetry: true,
@@ -327,9 +332,13 @@ export class RetryManager {
     if (this.state.attempt > 0) {
       this.state.attempt--;
     }
+    if (this.state.rateLimitAttempts && this.state.rateLimitAttempts > 0) {
+      this.state.rateLimitAttempts--;
+    }
     if (this.state.attempt === 0) {
       this.state.isRetrying = false;
       this.state.startTime = null;
+      this.state.rateLimitAttempts = 0;
     }
   }
 
@@ -341,6 +350,7 @@ export class RetryManager {
       isRetrying: false,
       startTime: null,
       attempt: 0,
+      rateLimitAttempts: 0,
       lastDelayMs: 0,
       lastErrorMessage: undefined,
       lastInterruptionType: undefined,
@@ -392,7 +402,7 @@ export class RetryManager {
       `  Last delay: ${formatDelay(this.state.lastDelayMs)}\n` +
       `  Last error: ${this.state.lastErrorMessage || "None"}`;
 
-    if (this.state.retryAfterHeaderReceived && this.state.expectedTokenResetTime) {
+    if (this.state.expectedTokenResetTime) {
       summary += `\n  Expected token reset time: ${formatDateTime(this.state.expectedTokenResetTime)}`;
     }
 

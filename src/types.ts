@@ -92,6 +92,8 @@ export interface RetryState {
   expectedTokenResetTime?: number;
   /** Optional timestamp of last processed message */
   lastMessageTimestamp?: number;
+  /** Number of rate limit attempts in the current retry cycle */
+  rateLimitAttempts?: number;
 }
 
 /**

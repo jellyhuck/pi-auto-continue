@@ -70,6 +70,8 @@ export const RATE_LIMIT_PATTERNS: RegExp[] = [
   /plan.?limit/i,
   /request.?limit/i,
   /api.?limit/i,
+  /chatgpt.?usage.?limit/i,
+  /hit.?your.?(?:chatgpt.?)?usage.?limit/i,
 
   // GitHub Copilot & other providers
   /copilot.?quota/i,

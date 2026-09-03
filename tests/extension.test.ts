@@ -639,5 +639,71 @@ describe("pi-auto-continue extension", () => {
       "Retry state should be reset to Idle"
     );
   });
+
+  it("correctly parses ChatGPT usage limit error, extracts estimated token reset time, and notifies UI", async () => {
+    const pi = new MockExtensionAPI();
+    extension(pi as any, testSettingsPath);
+
+    const ctx = new MockContext();
+    const chatGptError = '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.';
+
+    // Emit message_end with ChatGPT error (starts retry wait asynchronously)
+    const messagePromise = pi.emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: chatGptError,
+          timestamp: 5000,
+        },
+      },
+      ctx
+    );
+
+    // Yield to allow message_end handler to process up to sleep
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // 1. Warning notification emitted with expected reset time
+    const warningNotif = ctx.notifications.find((n) =>
+      n.message.includes("Rate limit / quota error detected")
+    );
+    assert.ok(warningNotif, "Warning notification should be emitted");
+    assert.ok(
+      warningNotif.message.includes("Expected token reset time:"),
+      "Warning notification should include Expected token reset time label"
+    );
+    const dateRegex = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
+    assert.ok(
+      dateRegex.test(warningNotif.message),
+      `Expected date format YYYY-MM-DD HH:MM:SS in notification: ${warningNotif.message}`
+    );
+
+    // 2. Status command should also display expected token reset time
+    const cmd = pi.commands.get("auto-continue");
+    await cmd.handler("status", ctx);
+
+    const statusNotif = ctx.notifications.find((n) =>
+      n.message.includes("Auto-Continue Status:")
+    );
+    assert.ok(statusNotif, "Status notification should be emitted");
+    assert.ok(
+      statusNotif.message.includes("Expected token reset time:"),
+      "Status should print expected token reset time"
+    );
+    assert.ok(
+      dateRegex.test(statusNotif.message),
+      `Expected date format YYYY-MM-DD HH:MM:SS in status: ${statusNotif.message}`
+    );
+
+    // Cancel retry wait via interactive input to cleanly terminate promise
+    await pi.emit(
+      "input",
+      { type: "input", source: "interactive", text: "cancel" },
+      ctx
+    );
+    await messagePromise;
+  });
 });
+
 

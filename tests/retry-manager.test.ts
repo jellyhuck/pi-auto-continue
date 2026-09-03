@@ -41,13 +41,68 @@ describe("RetryManager", () => {
     assert.equal(res2.elapsedMs, 5000);
   });
 
-  it("respects explicit Retry-After delay when provided", () => {
+  it("respects explicit Retry-After delay on first attempt with baseDelay + reset time, and uses exponential backoff subsequently", () => {
     const manager = new RetryManager();
-    const config = { ...DEFAULT_CONFIG };
+    const config = {
+      ...DEFAULT_CONFIG,
+      baseDelayMs: 5000,
+      backoffMultiplier: 2,
+      rateLimit: {
+        ...DEFAULT_CONFIG.rateLimit,
+        jitter: false,
+      },
+    };
 
-    const res = manager.evaluateRetry(config, "Rate limited", 15000, 1000000);
-    assert.equal(res.canRetry, true);
-    assert.equal(res.delayMs, 15000);
+    // Attempt 1: baseDelay (5000) + expected reset time (15000) = 20000
+    const res1 = manager.evaluateRetry(config, "Rate limited", 15000, 1000000);
+    assert.equal(res1.canRetry, true);
+    assert.equal(res1.attempt, 1);
+    assert.equal(res1.delayMs, 20000);
+
+    // Attempt 2: baseDelay * backoff = 5000 * 2 = 10000 (even if error hint repeats)
+    const res2 = manager.evaluateRetry(config, "Rate limited again", 15000, 1020000);
+    assert.equal(res2.canRetry, true);
+    assert.equal(res2.attempt, 2);
+    assert.equal(res2.delayMs, 10000);
+
+    // Attempt 3: baseDelay * backoff^2 = 5000 * 4 = 20000
+    const res3 = manager.evaluateRetry(config, "Rate limited again", 15000, 1030000);
+    assert.equal(res3.canRetry, true);
+    assert.equal(res3.attempt, 3);
+    assert.equal(res3.delayMs, 20000);
+  });
+
+  it("first attempt delay respects expected reset time even when greater than maxDelayMs", () => {
+    const manager = new RetryManager();
+    const config = {
+      ...DEFAULT_CONFIG,
+      baseDelayMs: 5000,
+      maxDelayMs: 10000, // 10 seconds max delay for backoff
+      backoffMultiplier: 2,
+      rateLimit: {
+        ...DEFAULT_CONFIG.rateLimit,
+        jitter: false,
+      },
+    };
+
+    // Quota resets in 60s (> maxDelayMs of 10s)
+    // Attempt 1: 5000 + 60000 = 65000 (respects quota reset time, not capped to 10000)
+    const res1 = manager.evaluateRetry(config, "Rate limited", 60000, 1000000);
+    assert.equal(res1.canRetry, true);
+    assert.equal(res1.attempt, 1);
+    assert.equal(res1.delayMs, 65000);
+
+    // Attempt 2: baseDelay * backoff = 5000 * 2 = 10000
+    const res2 = manager.evaluateRetry(config, "Rate limited again", null, 1065000);
+    assert.equal(res2.canRetry, true);
+    assert.equal(res2.attempt, 2);
+    assert.equal(res2.delayMs, 10000);
+
+    // Attempt 3: 5000 * 4 = 20000, capped at maxDelayMs of 10000
+    const res3 = manager.evaluateRetry(config, "Rate limited again", null, 1075000);
+    assert.equal(res3.canRetry, true);
+    assert.equal(res3.attempt, 3);
+    assert.equal(res3.delayMs, 10000);
   });
 
   it("caps single delay to maxDelayMs", () => {

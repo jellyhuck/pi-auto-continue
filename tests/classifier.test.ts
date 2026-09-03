@@ -42,6 +42,15 @@ describe("classifier", () => {
       assert.equal(info.expectedResetTime, now + 45000);
       assert.equal(info.hasHeader, false);
     });
+
+    it("extracts delay and expectedResetTime from ChatGPT usage limit error message with tilde (~42 min)", () => {
+      const now = 1000000;
+      const error = '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.';
+      const info = extractRetryAfterInfo(undefined, error, now);
+      assert.equal(info.delayMs, 42 * 60 * 1000);
+      assert.equal(info.expectedResetTime, now + 42 * 60 * 1000);
+      assert.equal(info.hasHeader, false);
+    });
   });
 
   describe("extractRetryAfterDelay", () => {
@@ -73,6 +82,12 @@ describe("classifier", () => {
     it("extracts delay from error message text with minutes", () => {
       const delay = extractRetryAfterDelay(undefined, "Quota exceeded. Please retry after 2 minutes.");
       assert.equal(delay, 120000);
+    });
+
+    it("extracts delay from ChatGPT usage limit error message with tilde (~42 min)", () => {
+      const error = '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.';
+      const delay = extractRetryAfterDelay(undefined, error);
+      assert.equal(delay, 42 * 60 * 1000);
     });
 
     it("returns null when no retry delay is indicated", () => {
@@ -133,6 +148,48 @@ describe("classifier", () => {
         errorMessage: "You exceeded your current quota, please check your plan and billing details.",
       });
       assert.equal(result2.type, "RATE_LIMIT");
+    });
+
+    it("identifies ChatGPT usage limit error and extracts estimated token reset time", () => {
+      const now = 1750000000000;
+      const error = '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.';
+      const result = classifyInterruption(
+        {
+          stopReason: "error",
+          errorMessage: error,
+        },
+        now
+      );
+      assert.equal(result.type, "RATE_LIMIT");
+      assert.equal(result.retryAfterMs, 42 * 60 * 1000);
+      assert.equal(result.expectedResetTime, now + 42 * 60 * 1000);
+      assert.equal(result.retryAfterHeaderReceived, false);
+      assert.equal(result.errorMessage, error);
+    });
+
+    it("correctly parses ChatGPT usage limit variations (quotes, closing quotes, no quotes, min/minutes)", () => {
+      const now = 2000000000000;
+      const variations = [
+        '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.',
+        '"You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min."',
+        "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.",
+        "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min",
+        "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 minutes.",
+      ];
+      for (const err of variations) {
+        const result = classifyInterruption({ errorMessage: err }, now);
+        assert.equal(result.type, "RATE_LIMIT", `Failed type on: ${err}`);
+        assert.equal(
+          result.retryAfterMs,
+          42 * 60 * 1000,
+          `Failed delay on: ${err}`
+        );
+        assert.equal(
+          result.expectedResetTime,
+          now + 42 * 60 * 1000,
+          `Failed expectedResetTime on: ${err}`
+        );
+      }
     });
 
     it("identifies CONTEXT_OVERFLOW errors", () => {

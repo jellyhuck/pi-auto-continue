@@ -142,10 +142,12 @@ Extracts delays from:
 - Inline error text patterns (e.g., `try again in 25s`, `retry after 1.5m`, `resets at 2026-09-01T14:30:00Z`).
 
 ### 3. Retry Manager (`src/retry-manager.ts`)
-- **Consolidated `RetryState`**: Manages a single unified retry state tracking `attempt`, elapsed duration, backoff delay, and last interruption type across both rate limit retries and token continuations.
-- **Exponential Backoff Formula**: $\text{rawDelay} = \text{baseDelayMs} \times (\text{backoffMultiplier})^{\text{attempt} - 1}$
-- **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) on rate limits to prevent synchronized retry stampedes.
-- **Clamping**: $\text{delayMs} = \min(\text{maxDelayMs}, \max(\text{baseDelayMs}, \text{calculatedDelay}))$.
+- **Consolidated `RetryState`**: Manages a single unified retry state tracking `attempt`, rate limit attempts, elapsed duration, backoff delay, and last interruption type across both rate limit retries and token continuations.
+- **Quota Reset & Backoff Formula**:
+  - **First Rate Limit Attempt**: Delay respects expected quota reset times when present: $\text{delayMs} = \text{baseDelayMs} + \text{expectedResetTimeMs}$.
+  - **Subsequent Attempts & Continuations**: Follows exponential backoff: $\text{rawDelay} = \text{baseDelayMs} \times (\text{backoffMultiplier})^{\text{attempt} - 1}$.
+- **Jitter**: Applies $\pm 15\%$ random variation ($0.85$ to $1.15$) on rate limits during exponential backoff to prevent synchronized retry stampedes.
+- **Clamping**: $\text{delayMs} = \min(\text{maxDelayMs}, \max(\text{baseDelayMs}, \text{calculatedDelay}))$. First attempts with explicit quota reset time are not clamped to `maxDelayMs` to respect the full quota reset window.
 - **Limit Enforcement**: Stops retries when attempt count exceeds numeric `maxRetries` or elapsed time exceeds duration-based `maxRetries`. Rate limit errors can specify their own `maxRetries` and `jitter`.
 
 ### 4. Configuration & Retry Parser (`src/config.ts`)

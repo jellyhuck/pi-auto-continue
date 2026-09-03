@@ -3,6 +3,7 @@ import {
   CONTEXT_OVERFLOW_PATTERNS,
   RATE_LIMIT_PATTERNS,
 } from "./constants.ts";
+import { parseTargetTime } from "./config.ts";
 import type { ClassificationResult } from "./types.ts";
 
 export interface RetryAfterInfo {
@@ -94,13 +95,19 @@ export function extractRetryAfterInfo(
 
   // 2. Check error message text for inline retry hints
   if (errorMessage) {
-    // "retry after 30s", "try again in 12.5 seconds", "wait 45 seconds"
+    // "retry after 30s", "try again in 12.5 seconds", "wait 45 seconds", "try again in ~42 min."
     const secMatch = errorMessage.match(
-      /(?:retry.?after|try.?again.?in|wait|slow.?down.?for|resets?.?in)\s*(\d+(?:\.\d+)?)\s*(?:s|sec|seconds|m|min|minutes|h|hours|ms)?\b/i
+      /(?:retry.?after|try.?again.?(?:in|after)|wait|slow.?down.?for|resets?.?(?:in|after))\s*(?:~|approx(?:\.|imately)?|about|around)?\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)?\b/i
     );
     if (secMatch && secMatch[1]) {
       const num = parseFloat(secMatch[1]);
-      const unit = (secMatch[0].match(/(s|sec|seconds|m|min|minutes|h|hours|ms)$/i)?.[1] || "s").toLowerCase();
+      const rawUnit =
+        secMatch[2] ||
+        secMatch[0].match(
+          /(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|ms)$/i
+        )?.[1] ||
+        "s";
+      const unit = rawUnit.toLowerCase();
       if (!isNaN(num) && num > 0) {
         let delayMs: number;
         if (unit.startsWith("m") && !unit.startsWith("ms")) {
@@ -135,6 +142,22 @@ export function extractRetryAfterInfo(
         };
       }
     }
+
+    // Target clock time in error: "try again at 3:45 PM", "resets at 14:30"
+    const clockMatch = errorMessage.match(
+      /(?:resets?.?at|retry.?at|try.?again.?at)\s*([01]?\d|2[0-3]:[0-5]\d(?::[0-5]\d)?\s*(?:am|pm)?)\b/i
+    );
+    if (clockMatch && clockMatch[1]) {
+      const parsed = parseTargetTime(clockMatch[1], new Date(now));
+      if (parsed) {
+        const diffMs = parsed.targetTimeMs - now;
+        return {
+          delayMs: diffMs > 0 ? diffMs : 0,
+          expectedResetTime: parsed.targetTimeMs,
+          hasHeader: false,
+        };
+      }
+    }
   }
 
   return {
@@ -162,14 +185,19 @@ export interface ClassifyInput {
   content?: any[];
   httpStatus?: number;
   httpHeaders?: Record<string, string>;
+  now?: number;
 }
 
 /**
  * Classifies an agent message, turn, or provider response to identify interruption type.
  */
-export function classifyInterruption(input: ClassifyInput): ClassificationResult {
+export function classifyInterruption(
+  input: ClassifyInput,
+  now?: number
+): ClassificationResult {
   const { stopReason, errorMessage, content, httpStatus, httpHeaders } = input;
-  const retryInfo = extractRetryAfterInfo(httpHeaders, errorMessage);
+  const currentTime = now ?? input.now ?? Date.now();
+  const retryInfo = extractRetryAfterInfo(httpHeaders, errorMessage, currentTime);
 
   // 1. Direct HTTP 429 / 503 / 529 Rate Limit or Overload
   if (httpStatus === 429) {

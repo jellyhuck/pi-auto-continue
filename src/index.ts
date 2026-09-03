@@ -328,7 +328,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
     // CASE 1: Rate Limit / Quota Exhaustion / Provider Overload
     // =========================================================================
     if (classification.type === "RATE_LIMIT") {
-      if (classification.retryAfterHeaderReceived && classification.expectedResetTime) {
+      if (classification.expectedResetTime) {
         lastExpectedTokenResetTime = classification.expectedResetTime;
       }
 
@@ -625,8 +625,7 @@ When your response is cut off due to token limits or incomplete tool calls, you 
       ];
 
       const expectedResetTime =
-        retryState.expectedTokenResetTime ||
-        (retryState.retryAfterHeaderReceived || lastExpectedTokenResetTime ? lastExpectedTokenResetTime : null);
+        retryState.expectedTokenResetTime || lastExpectedTokenResetTime;
       if (expectedResetTime) {
         const remaining = Math.max(0, expectedResetTime - Date.now());
         const remainingHint = remaining > 0 ? ` (in ${formatDelay(remaining)})` : " (passed)";
